@@ -103,7 +103,16 @@ model = "qwen2.5-coder:7b"
 timeout_s = 20
 ```
 
-**Cloud API (Gemini, OpenAI, etc.):**
+### Providing API Keys (for Cloud Endpoints)
+
+If using a cloud provider (Gemini, OpenAI, Groq, etc.), provide your API key using either method:
+
+**Method 1: Environment Variable (Recommended)**
+Export the key in your `~/.bashrc` or `~/.zshrc`:
+```bash
+export GEMINI_API_KEY="AIzaSy..."
+```
+Then reference the variable name in `~/.gemini/config/agy-auto/policy.toml`:
 ```toml
 [classifier]
 endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -111,6 +120,17 @@ model = "gemini-2.5-flash"
 api_key_env = "GEMINI_API_KEY"
 timeout_s = 15
 ```
+
+**Method 2: Directly in `policy.toml`**
+Alternatively, write the key directly into `~/.gemini/config/agy-auto/policy.toml`:
+```toml
+[classifier]
+endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+model = "gemini-2.5-flash"
+api_key = "AIzaSy..."
+timeout_s = 15
+```
+*(Note: Local models like Ollama or llama.cpp do not require any API key).*
 
 ## Running without a classifier (Deterministic Mode)
 

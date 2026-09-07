@@ -92,9 +92,13 @@ def classify(cfg: dict, call: dict) -> tuple[str, str, dict]:
     if cfg.get("model"):
         body["model"] = cfg["model"]
     headers = {"Content-Type": "application/json"}
-    key_env = cfg.get("api_key_env")
-    if key_env and os.environ.get(key_env):
-        headers["Authorization"] = "Bearer " + os.environ[key_env]
+    api_key = cfg.get("api_key")
+    if not api_key:
+        key_env = cfg.get("api_key_env")
+        if key_env and os.environ.get(key_env):
+            api_key = os.environ[key_env]
+    if api_key:
+        headers["Authorization"] = "Bearer " + str(api_key).strip()
     req = urllib.request.Request(endpoint, data=json.dumps(body).encode(), headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
