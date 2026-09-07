@@ -106,11 +106,13 @@ class ParserTest(unittest.TestCase):
 class _Handler(http.server.BaseHTTPRequestHandler):
     response = {"decision": "allow", "reason": "mock"}
     calls = 0
+    last_auth_header = None
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
         self.rfile.read(n)
         _Handler.calls += 1
+        _Handler.last_auth_header = self.headers.get("Authorization")
         body = json.dumps({"choices": [{"message": {"content": json.dumps(_Handler.response)}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}, "model": "mock"}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -191,6 +193,29 @@ class RunTest(unittest.TestCase):
         self.assertEqual(out["decision"], "deny")
         self.assertIn("classifier unavailable", out["reason"])
         self.assertEqual(self.audit_records()[-1]["layer"], "classifier-error")
+
+    def test_cloud_classifier_missing_api_key(self):
+        os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        os.environ.pop("GEMINI_API_KEY", None)
+        out = engine_main.run(self.payload("pip install requests"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("API key missing", out["reason"])
+        self.assertIn("GEMINI_API_KEY", out["reason"])
+        self.assertEqual(self.audit_records()[-1]["layer"], "classifier-error")
+
+    def test_classifier_auth_header_forwarded(self):
+        os.environ["GEMINI_API_KEY"] = "test-secret-key"
+        policy_file = os.path.join(self.tmp, "auth.toml")
+        with open(policy_file, "w") as fh:
+            fh.write(f'[classifier]\nendpoint = "http://127.0.0.1:{self.port}/v1/chat/completions"\napi_key_env = "GEMINI_API_KEY"\n')
+        os.environ["AGY_AUTO_POLICY"] = policy_file
+        try:
+            out = engine_main.run(self.payload("pip install requests"))
+            self.assertEqual(out["decision"], "allow")
+            self.assertEqual(_Handler.last_auth_header, "Bearer test-secret-key")
+        finally:
+            os.environ.pop("AGY_AUTO_POLICY", None)
+            os.environ.pop("GEMINI_API_KEY", None)
 
     def test_escalation_after_threshold(self):
         reasons = []
