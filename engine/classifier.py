@@ -97,6 +97,9 @@ def classify(cfg: dict, call: dict) -> tuple[str, str, dict]:
         key_env = cfg.get("api_key_env")
         if key_env and os.environ.get(key_env):
             api_key = os.environ[key_env]
+    if not api_key and any(h in endpoint for h in ("googleapis.com", "api.openai.com", "api.groq.com")):
+        env_name = cfg.get("api_key_env") or "GEMINI_API_KEY"
+        raise ClassifierError(f"API key missing for {endpoint.split('/')[2]}: export {env_name}=<key> or set api_key in policy.toml")
     if api_key:
         headers["Authorization"] = "Bearer " + str(api_key).strip()
     req = urllib.request.Request(endpoint, data=json.dumps(body).encode(), headers=headers, method="POST")

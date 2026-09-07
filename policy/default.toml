@@ -21,14 +21,16 @@ threshold = 3
 decision = "deny"
 
 [classifier]
-# Any OpenAI-compatible /v1/chat/completions endpoint:
-#   - llama.cpp: "http://127.0.0.1:8080/v1/chat/completions" (or 8081)
-#   - Ollama:    "http://127.0.0.1:11434/v1/chat/completions" (set model = "qwen2.5-coder:7b")
-#   - Gemini:    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" (set api_key_env = "GEMINI_API_KEY")
-endpoint = "http://127.0.0.1:8081/v1/chat/completions"
-model = ""                 # empty = whatever the server serves
-api_key_env = "AGY_AUTO_CLASSIFIER_API_KEY"
-timeout_s = 20
+# Default: Google Gemini 2.5 Flash via AI Studio (Free tier, ~400ms latency, zero local RAM).
+# Get a free key at https://aistudio.google.com and export GEMINI_API_KEY="AIzaSy..." in your shell.
+#
+# Alternative (Local models):
+#   - llama.cpp: endpoint = "http://127.0.0.1:8080/v1/chat/completions", model = ""
+#   - Ollama:    endpoint = "http://127.0.0.1:11434/v1/chat/completions", model = "qwen2.5-coder:7b"
+endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+model = "gemini-2.5-flash"
+api_key_env = "GEMINI_API_KEY"
+timeout_s = 15
 max_timeout_s = 45         # hard cap; hooks.json timeout must exceed this
 max_context_chars = 1500
 max_tokens = 160

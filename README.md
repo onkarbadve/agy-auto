@@ -83,54 +83,65 @@ Requirements: `python3` ≥ 3.11 (stdlib only), `agy` on PATH. The hook itself i
 
 ## Classifier backend
 
-The classifier handles ambiguous or grey-area tool calls (Layer 3). Any OpenAI-compatible chat completions endpoint can be used:
+The classifier handles ambiguous or grey-area tool calls (Layer 3). It receives ~300 tokens (the command, cwd, workspace roots, and ~6 lines of user conversation context) and outputs a fast JSON judgment (`allow`, `deny`, or `ask`).
 
-### Example configurations (`~/.gemini/config/agy-auto/policy.toml`)
+### Default Setup: Google Gemini 2.5 Flash (Fast & Free)
 
-**llama.cpp / local server (default: port 8081):**
+By default, `agy-auto` is configured to use **Gemini 2.5 Flash** via Google AI Studio's OpenAI-compatible endpoint:
+* **Zero local resource consumption**: No background RAM or VRAM used on your machine.
+* **Fast**: ~350–500 ms roundtrip.
+* **100% Free**: Google AI Studio provides a free tier (up to 15 requests/minute).
+
+**How to provide your key (takes 30 seconds):**
+
+* **Option 1 (Recommended)**: Export your key in `~/.bashrc` or `~/.zshrc`:
+  ```bash
+  export GEMINI_API_KEY="AIzaSy..."
+  ```
+  *(Get a free key at [aistudio.google.com](https://aistudio.google.com)).*
+
+* **Option 2**: Paste it directly into `~/.gemini/config/agy-auto/policy.toml`:
+  ```toml
+  [classifier]
+  api_key = "AIzaSy..."
+  ```
+
+---
+
+### Alternative: Running a Local Model (llama.cpp / Ollama)
+
+If you prefer a 100% offline, air-gapped, or local setup without any external API calls, override `[classifier]` in `~/.gemini/config/agy-auto/policy.toml`:
+
+**Ollama:**
+```toml
+[classifier]
+endpoint = "http://127.0.0.1:11434/v1/chat/completions"
+model = "qwen2.5-coder:1.5b"  # or 7b
+timeout_s = 20
+```
+
+**llama.cpp / local server:**
 ```toml
 [classifier]
 endpoint = "http://127.0.0.1:8080/v1/chat/completions"
 model = ""
 timeout_s = 20
 ```
+*(Tip: A lightweight ~1.5B model like `Qwen2.5-Coder-1.5B-Instruct` is the sweet spot for local use: ~1.2 GB RAM footprint and ~400 ms response time).*
 
-**Ollama:**
+---
+
+### Alternative: Other Cloud Providers (Groq, OpenAI)
+
+Any OpenAI-compatible `/v1/chat/completions` endpoint works. For ultra-low latency (~200ms), Groq works seamlessly:
 ```toml
 [classifier]
-endpoint = "http://127.0.0.1:11434/v1/chat/completions"
-model = "qwen2.5-coder:7b"
-timeout_s = 20
+endpoint = "https://api.groq.com/openai/v1/chat/completions"
+model = "llama-3.1-8b-instant"
+api_key_env = "GROQ_API_KEY"
+timeout_s = 5
 ```
 
-### Providing API Keys (for Cloud Endpoints)
-
-If using a cloud provider (Gemini, OpenAI, Groq, etc.), provide your API key using either method:
-
-**Method 1: Environment Variable (Recommended)**
-Export the key in your `~/.bashrc` or `~/.zshrc`:
-```bash
-export GEMINI_API_KEY="AIzaSy..."
-```
-Then reference the variable name in `~/.gemini/config/agy-auto/policy.toml`:
-```toml
-[classifier]
-endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-model = "gemini-2.5-flash"
-api_key_env = "GEMINI_API_KEY"
-timeout_s = 15
-```
-
-**Method 2: Directly in `policy.toml`**
-Alternatively, write the key directly into `~/.gemini/config/agy-auto/policy.toml`:
-```toml
-[classifier]
-endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-model = "gemini-2.5-flash"
-api_key = "AIzaSy..."
-timeout_s = 15
-```
-*(Note: Local models like Ollama or llama.cpp do not require any API key).*
 
 ## Running without a classifier (Deterministic Mode)
 
