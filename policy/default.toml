@@ -1,0 +1,269 @@
+# agy-auto default policy. Version-controlled; engine code lives in ../engine.
+# Layering: this file < ~/.gemini/config/agy-auto/policy.toml < <workspace>/.agents/agy-auto.toml
+# Lists are unioned across layers. Workspace layers may add rules but cannot change
+# [classifier], [escalation], [cache], [audit] or `mode`.
+
+version = "1"
+# "enforce" or "dry-run" (dry-run logs the decision it would make and returns allow)
+mode = "enforce"
+# What to do with tools the engine has no rule for (MCP tools etc): "classify" | "deny" | "allow"
+unknown_tool = "classify"
+# If true, when agy is launched with --dangerously-skip-permissions, agy-auto
+# respects user intent and auto-allows all tool calls without checking.
+honor_dangerously_skip_permissions = true
+
+[escalation]
+# after this many denials of the same intent in one conversation, the reason tells
+# the model to stop retrying and ask the human. "deny" is the only decision that
+# blocks under always-proceed on agy 1.1.27 (see HARNESS-BEHAVIORS.md); "force_ask"
+# is accepted here for future builds that honor it.
+threshold = 3
+decision = "deny"
+
+[classifier]
+# Any OpenAI-compatible /v1/chat/completions endpoint:
+#   - llama.cpp: "http://127.0.0.1:8080/v1/chat/completions" (or 8081)
+#   - Ollama:    "http://127.0.0.1:11434/v1/chat/completions" (set model = "qwen2.5-coder:7b")
+#   - Gemini:    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions" (set api_key_env = "GEMINI_API_KEY")
+endpoint = "http://127.0.0.1:8081/v1/chat/completions"
+model = ""                 # empty = whatever the server serves
+api_key_env = "AGY_AUTO_CLASSIFIER_API_KEY"
+timeout_s = 20
+max_timeout_s = 45         # hard cap; hooks.json timeout must exceed this
+max_context_chars = 1500
+max_tokens = 160
+# fail-closed: classifier error/timeout -> "deny" (force_ask is a no-op on 1.1.27)
+on_error = "deny"
+
+[cache]
+ttl_hours = 24
+dir = "~/.gemini/config/agy-auto/state"
+
+[audit]
+dir = "~/.gemini/config/agy-auto/audit"
+
+[workspace]
+# Paths that count as scratch space: writes here are treated like workspace writes.
+scratch = ["/tmp", "/var/tmp", "~/.cache"]
+# Writes to these (relative to a workspace root) are hard-denied.
+protected = [".git", ".agents/hooks.json", ".agents/agy-auto.toml"]
+# Writes to these are sent to the classifier even when inside the workspace.
+sensitive = [".github/workflows", ".gitlab-ci.yml", "Jenkinsfile", ".pre-commit-config.yaml", ".husky"]
+
+[paths]
+# Credential material: any read/copy/archive of these is hard-denied (glob, ~ expanded).
+credential = [
+  "~/.ssh/**", "**/.env", "**/.env.*", "~/.aws/**", "~/.config/gcloud/**", "~/.azure/**",
+  "~/.kube/config", "~/.docker/config.json", "~/.netrc", "~/.npmrc", "~/.pypirc",
+  "~/.gnupg/**", "~/.password-store/**", "~/.local/share/keyrings/**", "~/.git-credentials",
+  "~/.config/gh/hosts.yml", "~/.gemini/antigravity-cli/antigravity-oauth-token",
+  "~/.gemini/antigravity-cli/history.jsonl", "~/.claude/.credentials.json", "~/.config/goose/**",
+  "/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/sudoers.d/**",
+  "**/*.pem", "**/*.key", "**/*id_rsa*", "**/*id_ed25519*", "**/*id_ecdsa*", "**/*.p12", "**/*.pfx",
+  "**/*.kdbx", "**/*.keychain*", "**/credentials.json", "**/secrets.json", "**/secrets.yaml", "**/secrets.yml",
+  "**/*.tfstate", "**/service-account*.json", "**/token.json", "**/.terraform.d/credentials*",
+]
+credential_exceptions = ["~/.ssh/known_hosts", "~/.ssh/config", "**/*.pub", "**/.env.example", "**/.env.sample", "**/.env.template", "**/.env.dist"]
+# Writes here are hard-denied (system, persistence, self-protection).
+system_write = [
+  "/etc/**", "/boot/**", "/usr/**", "/bin/**", "/sbin/**", "/lib/**", "/lib64/**", "/var/**", "/opt/**", "/root/**",
+  "/dev/**", "/proc/**", "/sys/**", "~/.bashrc", "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.zprofile",
+  "~/.config/systemd/**", "~/.config/autostart/**", "~/.local/share/systemd/**", "~/.config/environment.d/**",
+  "~/.ssh/**", "~/.gnupg/**", "~/.gemini/config/**", "~/.gemini/antigravity-cli/settings.json", "~/.gemini/GEMINI.md",
+  "~/.claude/**", "~/.local/bin/**", "~/bin/**", "~/.config/goose/**",
+]
+# Read-only commands may read these even though they are outside the workspace.
+readable_outside = ["/etc/os-release", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/fstab", "/etc/timezone", "/etc/localtime", "/etc/passwd", "/etc/group", "/proc/cpuinfo", "/proc/meminfo", "/proc/loadavg", "/proc/uptime", "/proc/version", "/proc/mounts", "/proc/self/status", "/sys/class/**", "/sys/devices/**", "/usr/share/**", "/usr/lib/**", "/usr/lib64/**", "/usr/include/**", "/usr/bin/**", "/usr/local/**", "/opt/**", "/dev/null", "/dev/urandom", "/dev/stdin", "/dev/zero"]
+system_write_exceptions = ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/**", "/proc/self/fd/**", "/var/tmp/**"]
+# Block devices etc. Any write/redirect/dd here is denied.
+device = ["/dev/sd*", "/dev/nvme*", "/dev/hd*", "/dev/vd*", "/dev/mmcblk*", "/dev/loop*", "/dev/mapper/**", "/dev/dm-*", "/dev/mem", "/dev/kmem", "/dev/port", "/dev/disk/**", "/dev/md*"]
+
+[hard_deny]
+# Bare command names that are always denied (after wrapper unwrapping).
+commands = [
+  "sudo", "su", "doas", "pkexec", "run0",
+  "mkfs", "mke2fs", "mkfs.ext4", "mkfs.ext3", "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "mkfs.fat", "mkfs.ntfs", "mkswap",
+  "fdisk", "sfdisk", "cfdisk", "gdisk", "sgdisk", "parted", "gparted", "wipefs", "blkdiscard", "dd", "shred",
+  "mount", "umount", "losetup", "cryptsetup", "lvremove", "lvcreate", "lvextend", "lvreduce", "vgremove", "vgcreate", "pvcreate", "pvremove", "mdadm",
+  "fsck", "e2fsck", "xfs_repair", "tune2fs", "resize2fs", "xfs_growfs", "btrfs", "zfs", "zpool", "hdparm", "nvme", "smartctl",
+  "shutdown", "reboot", "poweroff", "halt", "init", "telinit", "systemctl-reboot",
+  "useradd", "usermod", "userdel", "adduser", "deluser", "groupadd", "groupmod", "groupdel", "passwd", "chpasswd", "chsh", "chfn", "visudo", "vipw", "vigr", "newusers",
+  "iptables", "ip6tables", "iptables-restore", "ip6tables-restore", "iptables-save", "nft", "firewall-cmd", "ufw", "pfctl", "ebtables", "arptables",
+  "at", "batch", "atrm", "launchctl", "schtasks",
+  "eval", "history",
+  "mkfs.exfat", "mkfs.f2fs", "swapoff", "swapon", "sysctl", "modprobe", "insmod", "rmmod", "setenforce", "chroot", "nsenter", "unshare",
+  "chattr", "setcap", "setfacl",
+]
+# name + args regex (matched against the argv after the name, joined by spaces)
+command_patterns = [
+  { name = "rm", args = "(^|\\s)--no-preserve-root(\\s|$)", reason = "rm --no-preserve-root" },
+  { name = "git", args = "^push\\b.*(\\s-f\\b|\\s--force(-with-lease|-if-includes)?\\b|\\s\\+\\S|\\s--delete\\b|\\s-d\\b|\\s:\\S)", reason = "force-push or remote branch deletion" },
+  { name = "git", args = "^push\\b.*\\s--mirror\\b", reason = "mirror push rewrites the remote" },
+  { name = "git", args = "^(rebase|filter-branch|filter-repo|replace)\\b", reason = "history rewrite" },
+  { name = "git", args = "^commit\\b.*\\s--amend\\b", reason = "history rewrite (amend)" },
+  { name = "git", args = "^reset\\b.*\\s(--hard|--merge)\\b", reason = "discards uncommitted work" },
+  { name = "git", args = "^checkout\\s+(--\\s+)?(\\.|\\*)(\\s|$)", reason = "git checkout . silently discards uncommitted changes" },
+  { name = "git", args = "^checkout\\s+--\\s", reason = "git checkout -- <path> silently discards uncommitted changes" },
+  { name = "git", args = "^restore\\b(?!.*--staged)", reason = "git restore discards uncommitted changes" },
+  { name = "git", args = "^clean\\b.*\\s-[a-zA-Z]*[fdxX]", reason = "git clean deletes untracked files" },
+  { name = "git", args = "^stash\\s+(drop|clear)\\b", reason = "drops stashed work" },
+  { name = "git", args = "^branch\\b.*\\s-[a-zA-Z]*D", reason = "force-deletes a branch" },
+  { name = "git", args = "^(update-ref\\s+-d|reflog\\s+(expire|delete)|gc\\b.*--prune|prune\\b)", reason = "destroys reflog/objects" },
+  { name = "git", args = "^config\\b.*\\s(--global|--system)\\b", reason = "modifies global git config (persistence vector)" },
+  { name = "git", args = "(^|\\s)-c\\s*(core\\.(sshCommand|hooksPath|pager|editor|fsmonitor|askpass)|credential\\.|diff\\.external|alias\\.|filter\\.|http\\.proxy|gpg\\.program)", reason = "inline git config that executes commands or captures credentials" },
+  { name = "git", args = "^config\\b.*\\b(core\\.(sshCommand|hooksPath|pager|editor|fsmonitor|askpass)|credential\\.|diff\\.external|alias\\.|filter\\.|http\\.proxy|gpg\\.program)", reason = "git config key that executes commands or captures credentials" },
+  { name = "git", args = "^remote\\s+(remove|rm|set-url|prune)\\b", reason = "changes remotes" },
+  { name = "crontab", args = "^(?!-l\\b)", reason = "modifies scheduled tasks (crontab -l is allowed)" },
+  { name = "systemctl", args = "(^|\\s)(enable|disable|start|stop|restart|reload|mask|unmask|edit|daemon-reload|set-default|isolate|kill|reboot|poweroff|halt|suspend|hibernate|link|revert)\\b", reason = "changes service state or persistence" },
+  { name = "chmod", args = "(^|\\s)-[a-zA-Z]*R", reason = "recursive permission change" },
+  { name = "chown", args = "(^|\\s)-[a-zA-Z]*R", reason = "recursive ownership change" },
+  { name = "chmod", args = "(^|\\s)[0-7]?777\\b", reason = "world-writable permissions" },
+  { name = "kill", args = "(^|\\s)-(9|KILL|SIGKILL)?\\s*-1(\\s|$)", reason = "kills every process" },
+  { name = "killall", args = "", reason = "mass process kill" },
+  { name = "pkill", args = "(^|\\s)-[0-9A-Z]*\\s*-?(1|u|U)\\b", reason = "kills processes by user" },
+  { name = "npm", args = "^(publish|unpublish|deprecate|owner|token|adduser|login)\\b", reason = "package publish / registry account" },
+  { name = "yarn", args = "^(publish|npm\\s+publish)\\b", reason = "package publish" },
+  { name = "pnpm", args = "^publish\\b", reason = "package publish" },
+  { name = "twine", args = "^upload\\b", reason = "package publish" },
+  { name = "python", args = "^-m\\s+twine\\s+upload\\b", reason = "package publish" },
+  { name = "python3", args = "^-m\\s+twine\\s+upload\\b", reason = "package publish" },
+  { name = "cargo", args = "^(publish|yank|owner|login)\\b", reason = "package publish" },
+  { name = "gem", args = "^(push|yank|owner)\\b", reason = "package publish" },
+  { name = "mvn", args = "(^|\\s)(deploy|release:\\S+)\\b", reason = "artifact deploy" },
+  { name = "gradle", args = "(^|\\s)(publish\\S*|uploadArchives|bintrayUpload)\\b", reason = "artifact publish" },
+  { name = "docker", args = "^(push|login|logout|system\\s+prune|volume\\s+(rm|prune)|rmi|image\\s+(rm|prune)|container\\s+prune|network\\s+prune)\\b", reason = "registry push / destructive docker op" },
+  { name = "podman", args = "^(push|login|logout|system\\s+prune|volume\\s+(rm|prune)|rmi|image\\s+(rm|prune)|container\\s+prune|network\\s+prune)\\b", reason = "registry push / destructive podman op" },
+  { name = "gh", args = "^(release\\s+(create|upload|delete)|repo\\s+(delete|create|rename|archive|edit)|pr\\s+merge|secret\\s+set|auth\\s+(login|logout|token|refresh)|api\\b.*(-X|--method)\\s*(POST|PUT|PATCH|DELETE)|workflow\\s+run)\\b", reason = "GitHub state change / release / credentials" },
+  { name = "gcloud", args = "(^|\\s)(deploy|delete|create|update|set-iam-policy|add-iam-policy-binding|ssh|auth\\s+(login|activate-service-account|print-access-token|print-identity-token))\\b", reason = "cloud deploy / mutation / credentials" },
+  { name = "aws", args = "^s3\\s+(cp|sync|mv|rm|rb)\\b.*s3://|^(s3api|lambda|cloudformation|ecs|eks|ec2|iam|sts|secretsmanager|ssm)\\s+(?!(describe|get|list|head)-)", reason = "cloud mutation / upload / credentials" },
+  { name = "az", args = "(^|\\s)(deploy|create|delete|update|login|account\\s+get-access-token)\\b", reason = "cloud deploy / mutation / credentials" },
+  { name = "terraform", args = "^(apply|destroy|import|state\\s+(rm|mv|push)|taint|force-unlock)\\b", reason = "infrastructure mutation" },
+  { name = "tofu", args = "^(apply|destroy|import|state\\s+(rm|mv|push)|taint|force-unlock)\\b", reason = "infrastructure mutation" },
+  { name = "pulumi", args = "^(up|destroy|refresh|import|stack\\s+rm)\\b", reason = "infrastructure mutation" },
+  { name = "kubectl", args = "^(apply|create|delete|patch|replace|edit|scale|rollout|drain|cordon|taint|label|annotate|exec|cp|set)\\b", reason = "cluster mutation" },
+  { name = "helm", args = "^(install|upgrade|uninstall|delete|rollback)\\b", reason = "cluster mutation" },
+  { name = "firebase", args = "^deploy\\b", reason = "deploy" },
+  { name = "vercel", args = "^(deploy|--prod|alias|rm|remove|env\\s+(add|rm))\\b|^\\s*$", reason = "deploy" },
+  { name = "netlify", args = "^deploy\\b", reason = "deploy" },
+  { name = "fly", args = "^(deploy|launch|destroy|secrets)\\b", reason = "deploy" },
+  { name = "flyctl", args = "^(deploy|launch|destroy|secrets)\\b", reason = "deploy" },
+  { name = "heroku", args = "^(deploy|container:push|container:release|config:set|apps:destroy|pg:reset)\\b", reason = "deploy" },
+  { name = "serverless", args = "^(deploy|remove)\\b", reason = "deploy" },
+  { name = "sls", args = "^(deploy|remove)\\b", reason = "deploy" },
+  { name = "sam", args = "^(deploy|delete)\\b", reason = "deploy" },
+  { name = "cdk", args = "^(deploy|destroy)\\b", reason = "deploy" },
+  { name = "ansible-playbook", args = "", reason = "remote configuration change" },
+  { name = "dnf", args = "^(?!(list|info|search|check-update|repoquery|provides|history\\s+list|makecache|help|--version|deplist|repolist)\\b)", reason = "package manager mutation" },
+  { name = "yum", args = "^(?!(list|info|search|check-update|repoquery|provides|help|--version|repolist)\\b)", reason = "package manager mutation" },
+  { name = "apt", args = "^(?!(list|show|search|policy|help|--version)\\b)", reason = "package manager mutation" },
+  { name = "apt-get", args = "^(?!(--version|help)\\b)", reason = "package manager mutation" },
+  { name = "rpm", args = "(^|\\s)-[a-zA-Z]*[ieUFV]|--(install|erase|upgrade|freshen|import)\\b", reason = "package manager mutation" },
+  { name = "pacman", args = "(^|\\s)-[A-Z]*[SRU]", reason = "package manager mutation" },
+  { name = "brew", args = "^(install|uninstall|remove|upgrade|link|unlink|tap|untap|services)\\b", reason = "package manager mutation" },
+  { name = "flatpak", args = "^(install|uninstall|remove|update|override|permission-set|remote-add|remote-delete)\\b", reason = "package manager mutation" },
+  { name = "snap", args = "^(install|remove|refresh|revert|connect|disconnect|set)\\b", reason = "package manager mutation" },
+  { name = "pip", args = "^(config|uninstall)\\b", reason = "pip config / uninstall" },
+  { name = "pip3", args = "^(config|uninstall)\\b", reason = "pip config / uninstall" },
+  { name = "npm", args = "^config\\s+set\\b", reason = "npm config change (registry/hooks)" },
+  { name = "date", args = "(^|\\s)(-s|--set)\\b", reason = "sets system clock" },
+  { name = "hwclock", args = "", reason = "sets hardware clock" },
+  { name = "timedatectl", args = "^set-", reason = "sets system clock" },
+  { name = "hostnamectl", args = "^set-", reason = "changes hostname" },
+  { name = "nmcli", args = "^(?!(-t|-g|general|device\\s+status|connection\\s+show|device\\s+show|networking\\s+connectivity)\\b)", reason = "network configuration change" },
+  { name = "ip", args = "^(link|addr|address|route|rule|neigh|tunnel|netns)\\s+(add|del|delete|set|change|replace|flush)\\b", reason = "network configuration change" },
+  { name = "tailscale", args = "^(up|down|logout|set|serve|funnel|ssh|file\\s+cp)\\b", reason = "VPN state change" },
+  { name = "openssl", args = "^(genrsa|genpkey|req|x509|pkcs12|rsa|ec)\\b.*\\s-out\\s", reason = "writes key material" },
+  { name = "ssh-keygen", args = "(^|\\s)-(R|f)\\b.*|^\\s*$", reason = "touches ssh key material" },
+  { name = "ssh-copy-id", args = "", reason = "installs keys on a remote host" },
+  { name = "gpg", args = "^(--import|--delete-key|--delete-secret-key|--export-secret-key|--export-secret-subkeys|--gen-key|--full-gen-key)\\b", reason = "key material" },
+  { name = "xdg-open", args = "", reason = "opens arbitrary handlers" },
+  { name = "open", args = "", reason = "opens arbitrary handlers" },
+  { name = "wall", args = "", reason = "broadcast" },
+  { name = "mail", args = "", reason = "outbound mail" },
+  { name = "sendmail", args = "", reason = "outbound mail" },
+  { name = "mutt", args = "", reason = "outbound mail" },
+  { name = "msmtp", args = "", reason = "outbound mail" },
+  { name = "swaks", args = "", reason = "outbound mail" },
+  { name = "curl", args = "(^|\\s)(--netrc|-n\\b|--netrc-file|-K\\b|--config\\b)", reason = "curl reading credentials/config from files" },
+  { name = "wget", args = "(^|\\s)(--post-file|--body-file)\\b", reason = "uploads local file contents" },
+  { name = "wget", args = "(^|\\s)-e\\s*use_proxy|--config\\b", reason = "wget config indirection" },
+  { name = "nc", args = "(^|\\s)-[a-zA-Z]*[el]", reason = "netcat listener/exec" },
+  { name = "ncat", args = "(^|\\s)(-[a-zA-Z]*[el]|--(exec|sh-exec|listen))", reason = "netcat listener/exec" },
+  { name = "socat", args = "(?i)(exec|system|fork|listen)", reason = "socat exec/listener" },
+  { name = "xargs", args = "^(-[^\\s]*\\s+)*(sh|bash|zsh|dash|ksh|fish|python\\d?|perl|ruby|node|php|eval|sudo|rm|shred|dd)\\b", reason = "xargs feeding an interpreter or destructive command" },
+  { name = "find", args = "(^|\\s)-delete\\b", reason = "find -delete", scope = "outside_ws" },
+  { name = "python", args = "^-m\\s+http\\.server\\b|^-m\\s+pyftpdlib|^-m\\s+smtpd", reason = "starts a network server" },
+  { name = "python3", args = "^-m\\s+http\\.server\\b|^-m\\s+pyftpdlib|^-m\\s+smtpd", reason = "starts a network server" },
+  { name = "ngrok", args = "", reason = "exposes local ports publicly" },
+  { name = "cloudflared", args = "^tunnel\\b", reason = "exposes local ports publicly" },
+  { name = "bore", args = "", reason = "exposes local ports publicly" },
+  { name = "ssh", args = "(^|\\s)-[a-zA-Z]*[RD]\\s*\\S+", reason = "ssh remote/dynamic port forwarding" },
+  { name = "ln", args = "", reason = "symlinks outside the workspace", scope = "outside_ws" },
+]
+# Regexes over the raw command line (last resort backstops against obfuscation).
+raw_patterns = [
+  { pattern = ":\\s*\\(\\s*\\)\\s*\\{\\s*:\\s*\\|\\s*:", reason = "fork bomb" },
+  { pattern = "(?i)\\bbase64\\b[^|]*\\|[^|]*\\b(sh|bash|zsh|dash|ksh|python\\d?|perl|ruby|node|eval)\\b", reason = "base64-decoded content piped to an interpreter" },
+  { pattern = "\\\\x[0-9a-fA-F]{2}\\\\x[0-9a-fA-F]{2}", reason = "hex-escaped obfuscation" },
+  { pattern = "\\$'\\\\x", reason = "ANSI-C hex-escaped obfuscation" },
+  { pattern = "(^|[\\s;&|(])(/bin/|/usr/bin/)?(sh|bash|zsh|dash|ksh)\\s+-[a-zA-Z]*c\\s*['\"]?\\s*\\$[({]", reason = "shell -c with computed script" },
+  { pattern = "/dev/(tcp|udp)/", reason = "bash network redirection" },
+  { pattern = "(^|[\\s;&|(\"'])rm\\s+(-[a-zA-Z]*\\s+)*(/|~|\\$HOME|/\\*|~/\\*|\\.\\.|\\*)(\\s|$|[\"';)])", reason = "rm of root, home, parent or everything" },
+  { pattern = "(^|[\\s;&|(])(chmod|chown)\\s+(-[a-zA-Z]*\\s+)*\\S+\\s+/(\\s|$)", reason = "permission change on /" },
+  { pattern = "(^|[\\s;&|(])>\\s*/dev/(sd|nvme|hd|vd|mmcblk|loop|mem|kmem)", reason = "write to a block/memory device" },
+  { pattern = "(?i)(secret|token|passw|api[_-]?key|credential)\\S*\\s*=\\s*\\S+.*\\b(curl|wget|nc|ncat|socat)\\b", reason = "credential assignment feeding a network command" },
+]
+# Any dynamic (variable / command substitution) argument to these is denied.
+network_commands = ["curl", "wget", "nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp", "sftp", "rsync", "ftp", "lftp", "dig", "nslookup", "host", "ping", "ping6", "http", "https", "httpie", "xh", "aria2c", "openssl", "mail", "sendmail", "mutt", "msmtp", "swaks", "curlie", "wscat", "websocat", "gh", "gcloud", "aws", "az", "kubectl", "helm", "docker", "podman", "pip", "pip3", "npm", "npx", "yarn", "pnpm", "cargo", "go", "gem", "mvn", "gradle", "hf", "huggingface-cli", "ollama", "tailscale", "traceroute", "mtr", "nmap", "masscan"]
+interpreters = ["sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "ash", "busybox", "python", "python2", "python3", "perl", "ruby", "node", "nodejs", "deno", "bun", "php", "lua", "Rscript", "julia", "osascript", "pwsh", "powershell", "tclsh", "expect", "awk", "gawk", "mawk"]
+bulk_readers = ["tar", "zip", "7z", "7za", "7zr", "rar", "cpio", "rsync", "scp", "cp", "dd", "mksquashfs", "zstd", "xz", "gzip", "bzip2", "restic", "borg", "rclone", "duplicity"]
+key_consumers = ["ssh", "scp", "sftp", "rsync", "ssh-add", "ssh-agent", "sshfs", "git", "mosh", "autossh"]
+
+[fast_allow]
+# Read-only commands. Fast-allowed only when every path argument resolves inside the
+# workspace (or scratch), every redirect target is inside the workspace or /dev/null,
+# and the command line has no unresolved expansions.
+readonly = [
+  "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "fdfind", "tree", "stat", "file", "du", "df", "pwd",
+  "echo", "printf", "true", "false", ":", "test", "[", "which", "type", "whereis", "date", "whoami", "id", "hostname", "uname", "uptime",
+  "env", "printenv", "basename", "dirname", "realpath", "readlink", "sort", "uniq", "cut", "tr", "column", "nl", "tac", "rev", "paste", "join",
+  "fold", "expand", "unexpand", "seq", "bc", "expr", "diff", "cmp", "comm", "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum", "b2sum",
+  "xxd", "od", "hexdump", "strings", "jq", "yq", "ps", "pgrep", "free", "nproc", "lscpu", "lsblk", "lsusb", "lspci", "lsmod", "ss", "netstat",
+  "getconf", "locale", "tty", "arch", "numfmt", "fmt", "pr", "iconv", "look", "shuf", "tsort", "sum", "wc", "less", "more", "ldd", "nm", "objdump", "readelf", "size",
+  "sleep", "cal", "sed", "awk", "gawk", "find", "git", "python", "python3", "node", "npm", "npx", "cargo", "go", "make", "pytest", "tox", "ruff", "black",
+  "mypy", "pyright", "flake8", "pylint", "isort", "eslint", "prettier", "tsc", "shellcheck", "shfmt", "gofmt", "golangci-lint", "rustfmt", "clippy-driver",
+  "podman", "docker", "systemctl", "journalctl", "dnf", "pip", "pip3", "mkdir", "touch", "cp", "mv", "tee", "vcgencmd", "nvidia-smi", "vulkaninfo", "glxinfo", "clinfo", "sensors",
+  "ip", "ping", "dig", "nslookup", "host", "curl", "wget", "gh", "man", "help", "info", "tldr", "timeout", "xargs", "cd", "export", "unset", "set", "source", ".", "crontab",
+]
+# Sub-command allow lists for multi-purpose tools (first non-option argument).
+git_readonly = ["status", "log", "diff", "show", "branch", "tag", "remote", "ls-files", "ls-tree", "ls-remote", "cat-file", "rev-parse", "rev-list", "describe", "blame", "shortlog", "stash", "config", "grep", "fetch", "worktree", "reflog", "help", "version", "check-ignore", "count-objects", "name-rev", "merge-base", "cherry", "whatchanged", "var", "symbolic-ref", "for-each-ref", "diff-tree", "diff-index", "diff-files", "show-ref", "verify-commit", "verify-tag", "notes", "bisect"]
+git_readonly_forbidden_flags = ["-d", "-D", "-m", "-M", "-f", "--force", "--delete", "--move", "--copy", "--edit", "-e", "--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "drop", "clear", "pop", "apply", "push", "prune", "add", "remove", "lock", "unlock", "expire", "set-url", "rm", "rename", "-w", "--write"]
+git_stash_readonly = ["list", "show"]
+git_config_readonly = ["--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope"]
+npm_readonly = ["test", "run test", "run build", "run lint", "run typecheck", "run check", "run format:check", "run lint:check", "ls", "list", "view", "info", "outdated", "audit", "--version", "-v", "help", "why", "explain", "pack --dry-run", "prefix", "root", "bin"]
+npx_readonly = ["tsc", "eslint", "prettier --check", "vitest run", "jest", "playwright test", "tsx --test", "ts-node", "vitest"]
+cargo_readonly = ["build", "test", "check", "clippy", "fmt", "doc", "tree", "metadata", "--version", "bench", "run", "search", "help", "version"]
+go_readonly = ["build", "test", "vet", "fmt", "version", "env", "list", "mod tidy", "mod download", "mod verify", "doc", "run", "generate", "help"]
+make_forbidden_targets = ["install", "uninstall", "deploy", "publish", "release", "push", "clean", "distclean", "docker-push", "upload"]
+podman_readonly = ["ps", "images", "logs", "inspect", "version", "info", "stats", "top", "port", "diff", "history", "image ls", "image list", "container ls", "container list", "volume ls", "network ls", "pod ps", "search", "--version", "system df"]
+systemctl_readonly = ["status", "list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "is-active", "is-enabled", "is-failed", "is-system-running", "show", "cat", "--version", "list-jobs", "get-default", "show-environment"]
+dnf_readonly = ["list", "info", "search", "check-update", "repoquery", "provides", "history list", "repolist", "makecache", "help", "--version", "deplist"]
+pip_readonly = ["list", "show", "freeze", "index versions", "check", "--version", "-V", "help", "download --no-deps -d /dev/null"]
+ip_readonly = ["a", "addr", "address", "link show", "link", "route show", "route", "-br", "-4", "-6", "-s", "-c", "neigh show", "neigh", "rule show", "maddr", "-brief", "-color", "-o"]
+python_readonly_modules = ["pytest", "unittest", "json.tool", "py_compile", "compileall", "pip list", "pip show", "pip freeze", "venv --help", "this", "site", "sysconfig", "tokenize", "ast", "pydoc", "http.client", "timeit", "pyflakes", "black --check", "mypy", "ruff"]
+# Domains for which a plain GET (curl/wget with no data flags) is fast-allowed.
+allowed_domains = ["github.com", "api.github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "gitlab.com", "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "crates.io", "static.crates.io", "index.crates.io", "proxy.golang.org", "sum.golang.org", "huggingface.co", "hf.co", "docs.python.org", "developer.mozilla.org", "go.dev", "pkg.go.dev", "docs.rs", "doc.rust-lang.org", "nodejs.org", "npmjs.com", "www.npmjs.com", "localhost", "127.0.0.1", "[::1]", "antigravity.google", "cloud.google.com", "developers.google.com", "ai.google.dev", "stackoverflow.com", "wikipedia.org", "en.wikipedia.org"]
+# Safe environment variables that fast-allow may expand.
+env_whitelist = ["HOME", "PWD", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "LANG", "LC_ALL", "OLDPWD", "HOSTNAME", "TMPDIR", "EDITOR", "PAGER"]
+max_sleep_seconds = 300
+
+[tools]
+# Tools that are always allowed (their effects are visible to the user or harmless).
+allow = ["command_status", "send_command_input", "notify_user", "ask_question", "manage_task", "schedule", "list_permissions", "ask_permission", "invoke_subagent", "define_subagent", "manage_subagents", "send_message", "generate_image", "search_web", "view_code_item", "read_terminal", "view_file_outline", "view_web_document_content_chunk", "view_content_chunk", "code_search", "grep_search", "find_by_name", "list_dir", "view_file"]
+# Tools whose argument names hold a path the engine must classify.
+read_path_args = { view_file = "AbsolutePath", list_dir = "DirectoryPath", grep_search = "SearchPath", find_by_name = "SearchDirectory", view_code_item = "File", view_file_outline = "AbsolutePath", code_search = "SearchPath" }
+write_path_args = { write_to_file = "TargetFile", replace_file_content = "TargetFile", multi_replace_file_content = "TargetFile", create_file = "TargetFile", delete_file = "TargetFile", edit_file = "TargetFile" }
+url_args = { read_url_content = "Url", open_browser_url = "Url", browser_subagent = "Url" }
+# URL hosts that are always denied (cloud metadata, link-local).
+denied_hosts = ["169.254.169.254", "metadata.google.internal", "metadata", "100.100.100.200", "fd00:ec2::254", "[fd00:ec2::254]"]
+max_url_query_chars = 300
