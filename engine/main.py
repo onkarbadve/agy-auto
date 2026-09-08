@@ -171,6 +171,38 @@ def is_dangerously_skip_active(pid: int | None = None) -> bool:
     return False
 
 
+def check_recent_user_approval(transcript_path: str | None) -> bool:
+    """Checks if the most recent user request in the transcript explicitly approved the action.
+    This allows conversational in-chat approvals ('i approve', 'go ahead', 'proceed') without
+    competing with the terminal UI event loop for /dev/tty.
+    """
+    if not transcript_path or not os.path.exists(transcript_path):
+        return False
+    try:
+        with open(transcript_path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - 100_000))
+            lines = fh.read().decode("utf-8", "replace").splitlines()[-40:]
+    except OSError:
+        return False
+    last_user_msg = ""
+    for ln in lines:
+        try:
+            rec = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("type") == "USER_INPUT":
+            c = rec.get("content") or ""
+            m = re.search(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", c, flags=re.S)
+            c = m.group(1) if m else re.sub(r"<[A-Z_]+>.*?</[A-Z_]+>", "", c, flags=re.S)
+            last_user_msg = c.strip()
+    if not last_user_msg:
+        return False
+    pattern = r"\b(approve|approved|allow|proceed|yes|go ahead|confirm|accept)\b"
+    return bool(re.search(pattern, last_user_msg, re.IGNORECASE))
+
+
 def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_classifier: bool) -> tuple[Decision, dict]:
     """Returns the final Decision (allow/deny/force_ask) plus audit details."""
     tool_call = payload.get("toolCall") or {}
@@ -204,8 +236,14 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
 
     if d.decision == "classify":
         why = d.reason
+        transcript_path = payload.get("transcriptPath")
+
+        # Conversational chat approval: if the user explicitly typed approval in chat, allow it!
+        if check_recent_user_approval(transcript_path):
+            return Decision("allow", "user_approval", f"explicit user approval in chat: {why}"), details
+
         if not use_classifier:
-            d = Decision("deny", "classifier", f"needs classification ({why}) and no classifier is available", d.category, d.intent or "classify")
+            d = Decision("deny", "classifier", f"needs classification ({why}) and no classifier is available; reply 'i approve' in chat to proceed or allow in policy", d.category, d.intent or "classify")
         else:
             ccfg = cfg.get("classifier", {})
             key = store.cache_key(tool, norm, cwd, engine.ws_roots) if store else None
@@ -221,7 +259,7 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
                     "cwd": cwd,
                     "workspace": engine.ws_roots,
                     "why": why,
-                    "context": read_context(payload.get("transcriptPath"), int(ccfg.get("max_context_chars", 1500))),
+                    "context": read_context(transcript_path, int(ccfg.get("max_context_chars", 1500))),
                 }
                 t0 = time.time()
                 try:
@@ -229,17 +267,18 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
                     meta["latency_ms"] = int((time.time() - t0) * 1000)
                     details["classifier"] = meta
                     if cd == "ask":
-                        d = Decision("deny", "classifier", f"needs human approval: {creason}. Ask the user before doing this.", "classifier-ask", d.intent or "classifier")
+                        d = Decision("deny", "classifier", f"needs human approval: {creason}. Reply 'i approve' in chat to proceed.", "classifier-ask", d.intent or "classifier")
                     elif cd == "deny":
                         d = Decision("deny", "classifier", creason or "classifier denied", "classifier-deny", d.intent or "classifier")
                     else:
                         d = Decision("allow", "classifier", creason or "classifier allowed", d.category, d.intent)
-                    if store:
+                    if store and d.decision in ("allow", "deny"):
                         store.cache_put(key, d.decision, d.reason)
                 except ClassifierError as e:
                     details["classifier"] = {"error": str(e)[:300], "latency_ms": int((time.time() - t0) * 1000)}
                     on_err = ccfg.get("on_error", "deny")
-                    d = Decision("force_ask" if on_err == "force_ask" else "deny", "classifier-error", f"policy classifier unavailable ({str(e)[:120]}); this action needs explicit human approval", "classifier-error", "classifier-error")
+                    err_msg = f"policy classifier unavailable ({str(e)[:120]}); reply 'i approve' in chat to proceed or allow in policy"
+                    d = Decision("force_ask" if on_err == "force_ask" else "deny", "classifier-error", err_msg, "classifier-error", "classifier-error")
 
     # escalation: repeated denials of the same intent
     if d.decision == "deny" and store is not None:

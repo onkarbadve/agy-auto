@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -145,8 +146,12 @@ class RunTest(unittest.TestCase):
         os.environ.pop("AGY_AUTO_DRY_RUN", None)
         os.environ["AGY_AUTO_HONOR_DANGEROUSLY_SKIP"] = "0"
         os.environ.pop("AGY_AUTO_FORCE_DANGEROUSLY_SKIP", None)
+        os.environ["AGY_AUTO_NO_TTY"] = "1"
         _Handler.response = {"decision": "allow", "reason": "mock allow"}
         _Handler.calls = 0
+
+    def tearDown(self):
+        os.environ.pop("AGY_AUTO_NO_TTY", None)
 
     def payload(self, cmd, conv="conv-1", step=1):
         return {"toolCall": {"name": "run_command", "args": {"CommandLine": cmd, "Cwd": WS}}, "conversationId": conv, "stepIdx": step, "workspacePaths": [WS]}
@@ -290,6 +295,46 @@ class RunTest(unittest.TestCase):
             self.assertIn("[agy-auto/hard_deny]", out["reason"])
         finally:
             os.environ.pop("AGY_AUTO_POLICY", None)
+
+    def test_chat_approval_offline_classifier(self):
+        # When classifier is down, an explicit approval in transcript allows the action
+        transcript_file = os.path.join(self.tmp, "transcript.jsonl")
+        with open(transcript_file, "w") as fh:
+            fh.write(json.dumps({"type": "USER_INPUT", "content": "<USER_REQUEST>i approve</USER_REQUEST>"}) + "\n")
+        
+        os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "http://127.0.0.1:1"  # offline
+        pl = self.payload("pip install requests")
+        pl["transcriptPath"] = transcript_file
+        out = engine_main.run(pl)
+        self.assertEqual(out, {"decision": "allow"})
+        rec = self.audit_records()[-1]
+        self.assertEqual(rec["layer"], "user_approval")
+        self.assertEqual(rec["decision"], "allow")
+
+    def test_chat_approval_does_not_bypass_hard_deny(self):
+        # Even with user approval in transcript, hard-deny rules remain inviolable
+        transcript_file = os.path.join(self.tmp, "transcript.jsonl")
+        with open(transcript_file, "w") as fh:
+            fh.write(json.dumps({"type": "USER_INPUT", "content": "i approve, go ahead"}) + "\n")
+
+        pl = self.payload(f"rm -rf {HOME}/Documents")
+        pl["transcriptPath"] = transcript_file
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+
+    def test_chat_approval_without_approval_denies(self):
+        # Without approval in transcript, offline classifier fails closed and asks for approval
+        transcript_file = os.path.join(self.tmp, "transcript.jsonl")
+        with open(transcript_file, "w") as fh:
+            fh.write(json.dumps({"type": "USER_INPUT", "content": "install requests please"}) + "\n")
+
+        os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "http://127.0.0.1:1"
+        pl = self.payload("pip install requests")
+        pl["transcriptPath"] = transcript_file
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("reply 'i approve' in chat", out["reason"])
 
 
 if __name__ == "__main__":

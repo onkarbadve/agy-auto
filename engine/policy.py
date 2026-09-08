@@ -977,7 +977,9 @@ class Engine:
                 return f"gh {joined} is not read-only"
             if args and args[0] == "api" and any(t in ("-X", "--method", "-f", "-F", "--field", "--raw-field", "--input") for t in args):
                 return "gh api with a mutating method"
-            return None
+        if base == "agy":
+            agy_ro = fa.get("agy_readonly", ["--help", "-h", "--version", "-v", "version", "help", "changelog", "hooks", "skills", "rules", "models"])
+            return None if self._prefix_match(args, agy_ro) else f"agy {joined} is not read-only"
         if base == "sleep":
             try:
                 n = float(re.sub(r"[smh]$", "", args[0])) if args else 0

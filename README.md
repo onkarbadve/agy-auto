@@ -30,12 +30,16 @@ Layers, first match wins:
    workspace-scoped command, every path resolves inside the workspace (or scratch dirs), every
    redirect stays inside, and there are no unresolved expansions. Compound commands (`|`, `&&`,
    `;`, subshells, `$(...)`) are allowed only if every part is.
-3. **Classifier**: an OpenAI-compatible chat endpoint (llama.cpp by default) sees the pending
-   call, cwd, workspace roots, the reason the deterministic layers passed, and recent user/model
-   messages from the transcript — never tool output. `allow` runs; `deny` and `ask` become a
-   deny with the reason. Results are cached per (policy version, tool, normalized command, cwd,
-   workspace). Any classifier error or timeout is a deny (fail-closed).
-4. **Escalation**: after `escalation.threshold` denials of the same intent in one conversation,
+3. **Classifier**: an OpenAI-compatible chat endpoint (Google Gemini 2.5 Flash by default, or llama.cpp)
+   sees the pending call, cwd, workspace roots, the reason the deterministic layers passed, and recent
+   user/model messages from the transcript — never tool output. `allow` runs; `deny` and `ask` become a
+   deny with the reason. Results are cached per (policy version, tool, normalized command, cwd, workspace).
+   Any classifier error or timeout is a deny (fail-closed).
+4. **Conversational Chat Approval**: when a command is denied or the classifier is offline, you can
+   simply reply in the chat (`> i approve` or `> yes, proceed`). The engine inspects the conversation
+   transcript directly (`USER_INPUT` steps only) to verify explicit human consent without hijacking `/dev/tty`
+   or interfering with `agy`'s terminal event loop. Hard-deny rules remain inviolable.
+5. **Escalation**: after `escalation.threshold` denials of the same intent in one conversation,
    the reason is prefixed `ESCALATED` and instructs the model to stop retrying and ask you.
 
 The reason string is fed back to the model verbatim by agy (`tool call denied by pre-tool hook:

@@ -235,9 +235,10 @@ readonly = [
   "sleep", "cal", "sed", "awk", "gawk", "find", "git", "python", "python3", "node", "npm", "npx", "cargo", "go", "make", "pytest", "tox", "ruff", "black",
   "mypy", "pyright", "flake8", "pylint", "isort", "eslint", "prettier", "tsc", "shellcheck", "shfmt", "gofmt", "golangci-lint", "rustfmt", "clippy-driver",
   "podman", "docker", "systemctl", "journalctl", "dnf", "pip", "pip3", "mkdir", "touch", "cp", "mv", "tee", "vcgencmd", "nvidia-smi", "vulkaninfo", "glxinfo", "clinfo", "sensors",
-  "ip", "ping", "dig", "nslookup", "host", "curl", "wget", "gh", "man", "help", "info", "tldr", "timeout", "xargs", "cd", "export", "unset", "set", "source", ".", "crontab",
+  "ip", "ping", "dig", "nslookup", "host", "curl", "wget", "gh", "man", "help", "info", "tldr", "timeout", "xargs", "cd", "export", "unset", "set", "source", ".", "crontab", "agy",
 ]
 # Sub-command allow lists for multi-purpose tools (first non-option argument).
+agy_readonly = ["--help", "-h", "--version", "-v", "version", "help", "changelog", "hooks", "skills", "rules", "models"]
 git_readonly = ["status", "log", "diff", "show", "branch", "tag", "remote", "ls-files", "ls-tree", "ls-remote", "cat-file", "rev-parse", "rev-list", "describe", "blame", "shortlog", "stash", "config", "grep", "fetch", "worktree", "reflog", "help", "version", "check-ignore", "count-objects", "name-rev", "merge-base", "cherry", "whatchanged", "var", "symbolic-ref", "for-each-ref", "diff-tree", "diff-index", "diff-files", "show-ref", "verify-commit", "verify-tag", "notes", "bisect"]
 git_readonly_forbidden_flags = ["-d", "-D", "-m", "-M", "-f", "--force", "--delete", "--move", "--copy", "--edit", "-e", "--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "drop", "clear", "pop", "apply", "push", "prune", "add", "remove", "lock", "unlock", "expire", "set-url", "rm", "rename", "-w", "--write"]
 git_stash_readonly = ["list", "show"]
