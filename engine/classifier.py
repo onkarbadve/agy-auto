@@ -87,8 +87,11 @@ def classify(cfg: dict, call: dict) -> tuple[str, str, dict]:
         "temperature": 0,
         "max_tokens": int(cfg.get("max_tokens", 160)),
         "response_format": {"type": "json_object"},
-        "chat_template_kwargs": {"enable_thinking": False},
     }
+    if "chat_template_kwargs" in cfg:
+        body["chat_template_kwargs"] = cfg["chat_template_kwargs"]
+    elif not any(h in endpoint for h in ("googleapis.com", "openai.com", "groq.com")):
+        body["chat_template_kwargs"] = {"enable_thinking": False}
     if cfg.get("model"):
         body["model"] = cfg["model"]
     headers = {"Content-Type": "application/json"}

@@ -108,12 +108,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     response = {"decision": "allow", "reason": "mock"}
     calls = 0
     last_auth_header = None
+    last_body = None
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
-        self.rfile.read(n)
+        raw = self.rfile.read(n)
         _Handler.calls += 1
         _Handler.last_auth_header = self.headers.get("Authorization")
+        _Handler.last_body = json.loads(raw.decode("utf-8")) if raw else {}
         body = json.dumps({"choices": [{"message": {"content": json.dumps(_Handler.response)}}], "usage": {"prompt_tokens": 10, "completion_tokens": 5}, "model": "mock"}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -218,9 +220,35 @@ class RunTest(unittest.TestCase):
             out = engine_main.run(self.payload("pip install requests"))
             self.assertEqual(out["decision"], "allow")
             self.assertEqual(_Handler.last_auth_header, "Bearer test-secret-key")
+            # Local endpoint should include chat_template_kwargs for thinking models
+            self.assertIn("chat_template_kwargs", _Handler.last_body)
         finally:
             os.environ.pop("AGY_AUTO_POLICY", None)
             os.environ.pop("GEMINI_API_KEY", None)
+
+    def test_chat_template_kwargs_omitted_for_google(self):
+        import classifier as classifier_mod
+        # Mocking urlopen to verify body sent to Google endpoint
+        captured_body = {}
+        def mock_urlopen(req, timeout=None):
+            nonlocal captured_body
+            captured_body = json.loads(req.data.decode("utf-8"))
+            class MockResp:
+                def read(self):
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({"decision": "allow", "reason": "ok"})}}]}).encode()
+                def __enter__(self): return self
+                def __exit__(self, *a): pass
+            return MockResp()
+
+        cfg = {
+            "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "api_key": "dummy-key",
+        }
+        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            d, r, _ = classifier_mod.classify(cfg, {"tool": "run_command", "command": "pip install foo"})
+            self.assertEqual(d, "allow")
+            # Google endpoint must NOT have chat_template_kwargs
+            self.assertNotIn("chat_template_kwargs", captured_body)
 
     def test_escalation_after_threshold(self):
         reasons = []
