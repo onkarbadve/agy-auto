@@ -21,14 +21,14 @@ threshold = 3
 decision = "deny"
 
 [classifier]
-# Default: Google Gemini 2.5 Flash via AI Studio (Free tier, ~400ms latency, zero local RAM).
+# Default: Google Gemini 3.5 Flash Lite via AI Studio (Free tier, ultra-low latency, zero local RAM).
 # Get a free key at https://aistudio.google.com and export GEMINI_API_KEY="AIzaSy..." in your shell.
 #
 # Alternative (Local models):
 #   - llama.cpp: endpoint = "http://127.0.0.1:8080/v1/chat/completions", model = ""
 #   - Ollama:    endpoint = "http://127.0.0.1:11434/v1/chat/completions", model = "qwen2.5-coder:7b"
 endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-model = "gemini-2.5-flash"
+model = "gemini-3.5-flash-lite"
 api_key_env = "GEMINI_API_KEY"
 timeout_s = 15
 max_timeout_s = 45         # hard cap; hooks.json timeout must exceed this

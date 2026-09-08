@@ -30,7 +30,7 @@ Layers, first match wins:
    workspace-scoped command, every path resolves inside the workspace (or scratch dirs), every
    redirect stays inside, and there are no unresolved expansions. Compound commands (`|`, `&&`,
    `;`, subshells, `$(...)`) are allowed only if every part is.
-3. **Classifier**: an OpenAI-compatible chat endpoint (Google Gemini 2.5 Flash by default, or llama.cpp)
+3. **Classifier**: an OpenAI-compatible chat endpoint (Google Gemini 3.5 Flash Lite by default, or llama.cpp)
    sees the pending call, cwd, workspace roots, the reason the deterministic layers passed, and recent
    user/model messages from the transcript — never tool output. `allow` runs; `deny` and `ask` become a
    deny with the reason. Results are cached per (policy version, tool, normalized command, cwd, workspace).
