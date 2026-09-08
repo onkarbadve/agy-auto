@@ -1,0 +1,4 @@
+{
+  "name": "agy-auto",
+  "description": "Multi-layer auto-permission gate for agy (deterministic rules + fast classifier + conversational human approval)"
+}

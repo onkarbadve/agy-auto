@@ -1,0 +1,17 @@
+{
+  "agy-auto": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hook.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

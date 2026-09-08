@@ -68,13 +68,24 @@ Not enforceable:
   engine sees no workspace and treats every path as outside it (more denies, never more allows).
 - The shell parser is conservative: what it cannot parse is denied, not guessed.
 
+## Quickstart
+
+```bash
+git clone https://github.com/onkarbadve/agy-auto.git ~/.gemini/config/plugins/agy-auto
+cd ~/.gemini/config/plugins/agy-auto && ./install.sh
+```
+
 ## Install
 
-```
-./install.sh            # register hook, set always-proceed, smoke test
-./install.sh --e2e      # also run tests/e2e.sh (two real agy calls)
+### Option A: Global Installer (Recommended)
+
+Run `./install.sh` to register the hook globally, set `toolPermission: always-proceed`, and execute smoke tests:
+
+```bash
+./install.sh                  # register hook, set always-proceed, smoke test
+./install.sh --e2e            # also run tests/e2e.sh (two real agy calls)
 ./install.sh --dry-run-mode   # log decisions, block nothing (for evaluating the policy)
-./install.sh --uninstall
+./install.sh --uninstall      # cleanly restore previous settings and hook configs
 ```
 
 `install.sh` merges the `agy-auto` key into `~/.gemini/config/hooks.json` (other hooks are kept,
@@ -83,18 +94,32 @@ a `.bak-<timestamp>` copy is written), sets `toolPermission` in
 `~/.gemini/config/agy-auto/{policy.toml,state,audit}`, runs three hook smoke tests without agy,
 and checks `agy -p "/hooks"` and `agy -p "/config"`.
 
+### Option B: Native Antigravity Plugin
+
+`agy-auto` is packaged as an `agy` plugin with a root `plugin.json` and `hooks.json`.
+
+* **Per-Project**: Clone into your repository's `.agents/plugins/agy-auto/`:
+  ```bash
+  git clone https://github.com/onkarbadve/agy-auto.git .agents/plugins/agy-auto
+  ```
+* **User-Global**: Clone into `~/.gemini/config/plugins/agy-auto/`:
+  ```bash
+  git clone https://github.com/onkarbadve/agy-auto.git ~/.gemini/config/plugins/agy-auto
+  ```
+*(Note: Ensure `toolPermission: always-proceed` is set in `~/.gemini/antigravity-cli/settings.json` so hooks can gate tool calls).*
+
 Requirements: `python3` ≥ 3.11 (stdlib only), `agy` on PATH. The hook itself is `sh` + Python.
 
 ## Classifier backend
 
 The classifier handles ambiguous or grey-area tool calls (Layer 3). It receives ~300 tokens (the command, cwd, workspace roots, and ~6 lines of user conversation context) and outputs a fast JSON judgment (`allow`, `deny`, or `ask`).
 
-### Default Setup: Google Gemini 2.5 Flash (Fast & Free)
+### Default Setup: Google Gemini 3.5 Flash Lite (Fast & Free)
 
-By default, `agy-auto` is configured to use **Gemini 2.5 Flash** via Google AI Studio's OpenAI-compatible endpoint:
+By default, `agy-auto` is configured to use **Gemini 3.5 Flash Lite** via Google AI Studio's OpenAI-compatible endpoint:
 * **Zero local resource consumption**: No background RAM or VRAM used on your machine.
-* **Fast**: ~350–500 ms roundtrip.
-* **100% Free**: Google AI Studio provides a free tier (up to 15 requests/minute).
+* **Fast**: ~300–450 ms roundtrip.
+* **100% Free**: Google AI Studio provides a free tier (15 RPM / 1,500 RPD / 1M TPM).
 
 **How to provide your key (takes 30 seconds):**
 
