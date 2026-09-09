@@ -162,16 +162,17 @@ class Engine:
         read_args = tcfg.get("read_path_args", {})
         write_args = tcfg.get("write_path_args", {})
         url_args = tcfg.get("url_args", {})
+        cwd_fallback = self.ws_roots[0] if self.ws_roots else None
         if name in write_args:
             target = args.get(write_args[name])
             if not isinstance(target, str) or not target:
                 return classify("file write with no target path", "write-unknown", f"{name}")
-            r, tags = self._tags(target, None)
+            r, tags = self._tags(target, cwd_fallback)
             if "unresolved" in tags:
                 return classify("write target not resolvable", "write-unknown", name)
             if "credential" in tags:
                 return deny(f"refusing to write credential material: {target}", "credential-write", f"{name}:cred")
-            if "device" in tags or "system_write" in tags:
+            if "device" in tags or "system_write" in tags or "gate_internal" in tags:
                 return deny(f"refusing to write outside user-space project files: {target} (system, persistence or self-protection path)", "system-write", f"{name}:sys")
             if "protected_ws" in tags:
                 return deny(f"refusing to write a protected workspace path: {target}", "protected-write", f"{name}:protected")
@@ -183,9 +184,11 @@ class Engine:
         if name in read_args:
             target = args.get(read_args[name])
             if isinstance(target, str) and target:
-                r, tags = self._tags(target, None)
+                r, tags = self._tags(target, cwd_fallback)
                 if "credential" in tags:
                     return deny(f"refusing to read credential material: {target}", "credential-read", f"{name}:cred")
+                if "gate_internal" in tags:
+                    return deny(f"refusing to inspect security gate internals: {target}", "gate-internal-read", f"{name}:gate")
             return Decision("allow", "fast_allow", "file read")
         if name in url_args:
             url = args.get(url_args[name])
@@ -292,7 +295,7 @@ class Engine:
                 return deny(f"refusing to write to device {tgt}", "device-write", "redirect")
             if "credential" in tags:
                 return deny(f"refusing to write credential path {tgt}", "credential-write", "redirect")
-            if "system_write" in tags:
+            if "system_write" in tags or "gate_internal" in tags:
                 return deny(f"refusing to write {tgt}: system, persistence or self-protection path", "system-write", "redirect")
             if "protected_ws" in tags:
                 return deny(f"refusing to write protected workspace path {tgt}", "protected-write", "redirect")
@@ -300,6 +303,8 @@ class Engine:
             rp, tags = self._tags(tgt, cwd)
             if "credential" in tags:
                 return deny(f"refusing to read credential material {tgt}", "credential-read", "redirect")
+            if "gate_internal" in tags:
+                return deny(f"refusing to inspect security gate internals: {tgt}", "gate-internal-read", "redirect")
         return None
 
     def _unwrap(self, words: list[Word]) -> tuple[list[Word], bool]:
@@ -446,12 +451,14 @@ class Engine:
             if self._any_path_outside(argv, cwd):
                 return deny("git rm -r outside the workspace", "recursive-delete", "git-rm")
 
-        # credential reads / bulk reads
+        # credential reads / bulk reads / gate internals
         skip = {"-i", "-o", "--identity", "-F"} if base in self.key_consumers else set()
         for tok in self._path_candidates(argv, skip_after=skip):
             rp, tags = self._tags(tok, cwd)
             if "credential" in tags:
                 return deny(f"refusing to touch credential material: {tok}", "credential-read", f"{base}:cred")
+            if "gate_internal" in tags:
+                return deny(f"refusing to inspect security gate internals: {tok}", "gate-internal-read", f"{base}:gate")
             if base in self.bulk_readers and "cred_ancestor" in tags:
                 return deny(f"{base} over {tok} would sweep up credential directories", "credential-read", f"{base}:bulk")
         if base in ("cat", "head", "tail", "less", "more", "strings", "xxd", "od", "hexdump", "base64", "grep", "rg", "awk", "sed", "cut", "sort", "uniq", "wc", "cp", "scp", "rsync", "tar", "zip") and dynamic_args:
@@ -506,6 +513,11 @@ class Engine:
                         if d:
                             return d
                 else:
+                    if self.pp.self_root and not self.pp.is_self_workspace and self.pp.self_root in code:
+                        return deny("inline code references security gate internals", "gate-internal-read", base)
+                    for gp in self.pp.gate_paths:
+                        if gp and gp in code:
+                            return deny("inline code references security gate internals", "gate-internal-read", base)
                     for rx, reason in self.raw_patterns:
                         if rx.search(code):
                             return deny(f"{reason} (inside {base} {tok})", "raw-pattern", base)
@@ -516,6 +528,11 @@ class Engine:
         for r in s.redirects:
             if r.op in ("<<", "<<-") and r.heredoc is not None and base not in SHELLS:
                 body = r.heredoc[0]
+                if self.pp.self_root and not self.pp.is_self_workspace and self.pp.self_root in body:
+                    return deny("heredoc script references security gate internals", "gate-internal-read", base)
+                for gp in self.pp.gate_paths:
+                    if gp and gp in body:
+                        return deny("heredoc script references security gate internals", "gate-internal-read", base)
                 for rx, reason in self.raw_patterns:
                     if rx.search(body):
                         return deny(f"{reason} (inside {base} heredoc)", "raw-pattern", base)
@@ -611,6 +628,8 @@ class Engine:
                 return deny(f"find over credential path {r}", "credential-read", "find:cred")
             if "system_write" in tags and "-delete" in argv:
                 return deny(f"find -delete over system or self-protection path {r}", "system-write", "find:sys")
+            if "gate_internal" in tags:
+                return deny(f"refusing to inspect security gate internals: {r}", "gate-internal-read", "find:gate")
             if "inside_ws" not in tags and "scratch" not in tags:
                 outside = True
         rest = argv[i:]
@@ -829,6 +848,8 @@ class Engine:
                 if tok == "-" or tok in WRITE_REDIRECT_SAFE:
                     continue
                 rp, tags = self._tags(tok, e["cwd"])
+                if "gate_internal" in tags:
+                    return f"touches security gate internals {tok}"
                 if "inside_ws" in tags or "scratch" in tags:
                     if "system_write" in tags:
                         return f"touches system or self-protection path {tok}"

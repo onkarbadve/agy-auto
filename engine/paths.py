@@ -90,6 +90,22 @@ class PathPolicy:
             self.self_root = None
         else:
             self.self_root = os.path.realpath(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+        self.is_self_workspace = (
+            any(is_within(r, self.self_root) for r in self.ws_roots)
+            if self.self_root
+            else False
+        )
+        self.gate_paths = [
+            expand("~/.gemini/config/agy-auto"),
+            expand("~/.gemini/config/hooks.json"),
+        ]
+        cache_dir = cfg.get("cache", {}).get("dir")
+        if cache_dir:
+            self.gate_paths.append(expand(cache_dir))
+        audit_dir = cfg.get("audit", {}).get("dir")
+        if audit_dir:
+            self.gate_paths.append(expand(audit_dir))
+        self.gate_paths = [resolve(gp, None) or expand(gp) for gp in self.gate_paths if gp]
         self.credential = [glob_to_regex(p) for p in paths.get("credential", [])]
         self.credential_exc = [glob_to_regex(p) for p in paths.get("credential_exceptions", [])]
         self.system_write = [glob_to_regex(p) for p in paths.get("system_write", [])]
@@ -112,6 +128,16 @@ class PathPolicy:
             return False
         return is_within(path, self.self_root)
 
+    def is_gate_internal(self, path: str) -> bool:
+        if os.environ.get("AGY_AUTO_DISABLE_SELF_PROTECTION") == "1":
+            return False
+        if self.self_root and not self.is_self_workspace and is_within(path, self.self_root):
+            return True
+        for gp in self.gate_paths:
+            if gp and is_within(path, gp):
+                return True
+        return False
+
     def is_credential(self, path: str) -> bool:
         if any(r.match(path) for r in self.credential_exc):
             return False
@@ -127,7 +153,7 @@ class PathPolicy:
     def is_system_write(self, path: str) -> bool:
         if any(r.match(path) for r in self.system_write_exc):
             return False
-        if self.is_self_path(path):
+        if self.is_self_path(path) or self.is_gate_internal(path):
             return True
         return any(r.match(path) for r in self.system_write)
 
@@ -168,6 +194,8 @@ class PathPolicy:
             tags.add("credential")
         if self.is_self_path(path):
             tags.add("self_path")
+        if self.is_gate_internal(path):
+            tags.add("gate_internal")
         if self.is_system_write(path):
             tags.add("system_write")
         root = self.ws_root_of(path)

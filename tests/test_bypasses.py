@@ -230,5 +230,117 @@ class AdversarialBypassTest(unittest.TestCase):
         self.assertIsNone(store.cache_get(key_v2))
 
 
+    # =========================================================================
+    # 5. GATE RECONNAISSANCE & INSPECTION PROTECTION
+    # =========================================================================
+    def test_read_hook_sh_via_cat_from_external_ws_denied(self):
+        hook_path = os.path.join(ROOT, "hook.sh")
+        out = engine_main.run(self.payload(f"cat {hook_path}", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_read_hook_sh_via_redirection_from_external_ws_denied(self):
+        hook_path = os.path.join(ROOT, "hook.sh")
+        out = engine_main.run(self.payload(f"cat < {hook_path}", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_ls_gate_root_from_external_ws_denied(self):
+        out = engine_main.run(self.payload(f"ls {ROOT}", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_cd_gate_root_from_external_ws_denied(self):
+        out = engine_main.run(self.payload(f"cd {ROOT}", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_find_gate_root_from_external_ws_denied(self):
+        out = engine_main.run(self.payload(f"find {ROOT} -name '*.py'", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_view_file_tool_against_gate_root_denied(self):
+        hook_path = os.path.join(ROOT, "hook.sh")
+        pl = {
+            "toolCall": {"name": "view_file", "args": {"AbsolutePath": hook_path}},
+            "conversationId": "c_recon",
+            "workspacePaths": ["/tmp"],
+        }
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_list_dir_tool_against_gate_root_denied(self):
+        pl = {
+            "toolCall": {"name": "list_dir", "args": {"DirectoryPath": ROOT}},
+            "conversationId": "c_recon",
+            "workspacePaths": ["/tmp"],
+        }
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_find_by_name_tool_against_gate_root_denied(self):
+        pl = {
+            "toolCall": {"name": "find_by_name", "args": {"SearchDirectory": ROOT, "Pattern": "*"}},
+            "conversationId": "c_recon",
+            "workspacePaths": ["/tmp"],
+        }
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_grep_search_tool_against_gate_root_denied(self):
+        pl = {
+            "toolCall": {"name": "grep_search", "args": {"SearchPath": ROOT, "Query": "token"}},
+            "conversationId": "c_recon",
+            "workspacePaths": ["/tmp"],
+        }
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_read_global_hooks_json_denied(self):
+        hooks_json = os.path.expanduser("~/.gemini/config/hooks.json")
+        out = engine_main.run(self.payload(f"cat {hooks_json}", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_read_approval_tokens_state_file_denied(self):
+        approvals_file = os.path.expanduser("~/.gemini/config/agy-auto/state/approvals.json")
+        out = engine_main.run(self.payload(f"cat {approvals_file}", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("refusing to inspect security gate internals", out["reason"])
+
+    def test_inline_code_referencing_gate_root_denied(self):
+        out = engine_main.run(self.payload(f"python3 -c \"print('{ROOT}')\"", ws="/tmp", cwd="/tmp"))
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("security gate internals", out["reason"])
+
+    def test_reading_gate_internals_allowed_when_self_workspace(self):
+        policy_py = os.path.join(ROOT, "engine", "policy.py")
+        pl = {
+            "toolCall": {"name": "view_file", "args": {"AbsolutePath": policy_py}},
+            "conversationId": "c_dev",
+            "workspacePaths": [ROOT],
+        }
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "allow")
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -280,7 +280,7 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
         token = store.create_approval(conv, tool, norm, cwd) if store else "TOKEN"
 
         if not use_classifier:
-            d = Decision("deny", "classifier", f"needs classification ({why}) and no classifier is available; reply '> agy-approve {token}' in chat to proceed or allow in policy", d.category, d.intent or "classify")
+            d = Decision("deny", "classifier", f"needs classification ({why}) and no classifier is available; reply '> agy-approve {token}' in chat to proceed (or have the user allow it in policy)", d.category, d.intent or "classify")
         else:
             ccfg = cfg.get("classifier", {})
             script_hash = get_target_script_hash(tool, args, cwd)
@@ -315,7 +315,7 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
                 except ClassifierError as e:
                     details["classifier"] = {"error": str(e)[:300], "latency_ms": int((time.time() - t0) * 1000)}
                     on_err = ccfg.get("on_error", "deny")
-                    err_msg = f"policy classifier unavailable ({str(e)[:120]}); reply '> agy-approve {token}' in chat to proceed or allow in policy"
+                    err_msg = f"policy classifier unavailable ({str(e)[:120]}); reply '> agy-approve {token}' in chat to proceed (or have the user allow it in policy)"
                     d = Decision("force_ask" if on_err == "force_ask" else "deny", "classifier-error", err_msg, "classifier-error", "classifier-error")
 
     # escalation: repeated denials of the same intent
