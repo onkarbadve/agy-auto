@@ -98,6 +98,9 @@ commands = [
 ]
 # name + args regex (matched against the argv after the name, joined by spaces)
 command_patterns = [
+  { name = "agy", args = "(^|\\s)--dangerously-skip-permissions(\\s|$)", reason = "nested agy invocation with permission bypass" },
+  { name = "antigravity", args = "(^|\\s)--dangerously-skip-permissions(\\s|$)", reason = "nested agy invocation with permission bypass" },
+  { name = "antigravity-cli", args = "(^|\\s)--dangerously-skip-permissions(\\s|$)", reason = "nested agy invocation with permission bypass" },
   { name = "rm", args = "(^|\\s)--no-preserve-root(\\s|$)", reason = "rm --no-preserve-root" },
   { name = "git", args = "^push\\b.*(\\s-f\\b|\\s--force(-with-lease|-if-includes)?\\b|\\s\\+\\S|\\s--delete\\b|\\s-d\\b|\\s:\\S)", reason = "force-push or remote branch deletion" },
   { name = "git", args = "^push\\b.*\\s--mirror\\b", reason = "mirror push rewrites the remote" },

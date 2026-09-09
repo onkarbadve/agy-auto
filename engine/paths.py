@@ -86,6 +86,10 @@ class PathPolicy:
         paths = cfg.get("paths", {})
         wsc = cfg.get("workspace", {})
         self.ws_roots = [r for r in (resolve(w, None) for w in ws_roots) if r]
+        if os.environ.get("AGY_AUTO_DISABLE_SELF_PROTECTION") == "1":
+            self.self_root = None
+        else:
+            self.self_root = os.path.realpath(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
         self.credential = [glob_to_regex(p) for p in paths.get("credential", [])]
         self.credential_exc = [glob_to_regex(p) for p in paths.get("credential_exceptions", [])]
         self.system_write = [glob_to_regex(p) for p in paths.get("system_write", [])]
@@ -103,6 +107,11 @@ class PathPolicy:
             self.cred_prefixes.append(strip_glob(p).rstrip("/"))
 
     # -- primitives
+    def is_self_path(self, path: str) -> bool:
+        if not self.self_root:
+            return False
+        return is_within(path, self.self_root)
+
     def is_credential(self, path: str) -> bool:
         if any(r.match(path) for r in self.credential_exc):
             return False
@@ -118,6 +127,8 @@ class PathPolicy:
     def is_system_write(self, path: str) -> bool:
         if any(r.match(path) for r in self.system_write_exc):
             return False
+        if self.is_self_path(path):
+            return True
         return any(r.match(path) for r in self.system_write)
 
     def ws_root_of(self, path: str) -> str | None:
@@ -155,6 +166,8 @@ class PathPolicy:
             tags.add("device")
         if self.is_credential(path):
             tags.add("credential")
+        if self.is_self_path(path):
+            tags.add("self_path")
         if self.is_system_write(path):
             tags.add("system_write")
         root = self.ws_root_of(path)

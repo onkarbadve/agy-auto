@@ -171,10 +171,40 @@ def is_dangerously_skip_active(pid: int | None = None) -> bool:
     return False
 
 
-def check_recent_user_approval(transcript_path: str | None) -> bool:
-    """Checks if the most recent user request in the transcript explicitly approved the action.
-    This allows conversational in-chat approvals ('i approve', 'go ahead', 'proceed') without
-    competing with the terminal UI event loop for /dev/tty.
+def get_target_script_hash(tool: str, args: dict, cwd: str | None) -> str:
+    """Computes SHA256 content hash of the target script if command executes a local script file."""
+    if tool != "run_command":
+        return ""
+    cmd = args.get("CommandLine")
+    if not isinstance(cmd, str) or not cmd.strip():
+        return ""
+    parts = cmd.strip().split()
+    if not parts:
+        return ""
+    script_candidates = []
+    base0 = os.path.basename(parts[0])
+    if base0 in ("python", "python3", "bash", "sh", "zsh", "node", "perl", "ruby"):
+        for tok in parts[1:]:
+            if not tok.startswith("-"):
+                script_candidates.append(tok)
+                break
+    elif parts[0].startswith("./") or parts[0].startswith("../") or "/" in parts[0]:
+        script_candidates.append(parts[0])
+
+    for target in script_candidates:
+        resolved = os.path.normpath(os.path.join(cwd, target)) if cwd and not os.path.isabs(target) else os.path.abspath(target)
+        if os.path.isfile(resolved):
+            try:
+                with open(resolved, "rb") as fh:
+                    return hashlib.sha256(fh.read()).hexdigest()[:16]
+            except OSError:
+                pass
+    return ""
+
+
+def check_recent_user_approval(transcript_path: str | None, conv: str, tool: str, norm: str, cwd: str | None, store: Store | None) -> bool:
+    """Checks if the user explicitly provided an action approval token in chat ('> agy-approve <token>').
+    Binds the approval to the specific command, working directory, and conversation, eliminating ambient authority.
     """
     if not transcript_path or not os.path.exists(transcript_path):
         return False
@@ -199,8 +229,13 @@ def check_recent_user_approval(transcript_path: str | None) -> bool:
             last_user_msg = c.strip()
     if not last_user_msg:
         return False
-    pattern = r"\b(approve|approved|allow|proceed|yes|go ahead|confirm|accept)\b"
-    return bool(re.search(pattern, last_user_msg, re.IGNORECASE))
+    m = re.search(r"(?:^|\s|>)\s*agy-approve\s+([0-9a-fA-F]{6,12})\b", last_user_msg)
+    if not m:
+        return False
+    token = m.group(1).lower()
+    if store:
+        return store.consume_approval(token, conv, tool, norm, cwd)
+    return False
 
 
 def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_classifier: bool) -> tuple[Decision, dict]:
@@ -238,15 +273,18 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
         why = d.reason
         transcript_path = payload.get("transcriptPath")
 
-        # Conversational chat approval: if the user explicitly typed approval in chat, allow it!
-        if check_recent_user_approval(transcript_path):
+        # Conversational chat approval: check if user provided valid agy-approve <token>
+        if check_recent_user_approval(transcript_path, conv, tool, norm, cwd, store):
             return Decision("allow", "user_approval", f"explicit user approval in chat: {why}"), details
 
+        token = store.create_approval(conv, tool, norm, cwd) if store else "TOKEN"
+
         if not use_classifier:
-            d = Decision("deny", "classifier", f"needs classification ({why}) and no classifier is available; reply 'i approve' in chat to proceed or allow in policy", d.category, d.intent or "classify")
+            d = Decision("deny", "classifier", f"needs classification ({why}) and no classifier is available; reply '> agy-approve {token}' in chat to proceed or allow in policy", d.category, d.intent or "classify")
         else:
             ccfg = cfg.get("classifier", {})
-            key = store.cache_key(tool, norm, cwd, engine.ws_roots) if store else None
+            script_hash = get_target_script_hash(tool, args, cwd)
+            key = store.cache_key(tool, norm, cwd, engine.ws_roots, extra_hash=script_hash) if store else None
             cached = store.cache_get(key) if store else None
             if cached:
                 details["cache_hit"] = True
@@ -267,7 +305,7 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
                     meta["latency_ms"] = int((time.time() - t0) * 1000)
                     details["classifier"] = meta
                     if cd == "ask":
-                        d = Decision("deny", "classifier", f"needs human approval: {creason}. Reply 'i approve' in chat to proceed.", "classifier-ask", d.intent or "classifier")
+                        d = Decision("deny", "classifier", f"needs human approval: {creason}. Reply '> agy-approve {token}' in chat to proceed.", "classifier-ask", d.intent or "classifier")
                     elif cd == "deny":
                         d = Decision("deny", "classifier", creason or "classifier denied", "classifier-deny", d.intent or "classifier")
                     else:
@@ -277,7 +315,7 @@ def decide(payload: dict, cfg: dict, version: str, store: Store | None, use_clas
                 except ClassifierError as e:
                     details["classifier"] = {"error": str(e)[:300], "latency_ms": int((time.time() - t0) * 1000)}
                     on_err = ccfg.get("on_error", "deny")
-                    err_msg = f"policy classifier unavailable ({str(e)[:120]}); reply 'i approve' in chat to proceed or allow in policy"
+                    err_msg = f"policy classifier unavailable ({str(e)[:120]}); reply '> agy-approve {token}' in chat to proceed or allow in policy"
                     d = Decision("force_ask" if on_err == "force_ask" else "deny", "classifier-error", err_msg, "classifier-error", "classifier-error")
 
     # escalation: repeated denials of the same intent

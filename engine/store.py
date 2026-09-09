@@ -47,9 +47,9 @@ class Store:
         self.policy_version = policy_version
 
     # ---- cache (classifier decisions only)
-    def cache_key(self, tool: str, normalized: str, cwd: str | None, ws: list[str]) -> str:
+    def cache_key(self, tool: str, normalized: str, cwd: str | None, ws: list[str], extra_hash: str = "") -> str:
         h = hashlib.sha256()
-        h.update("|".join([self.policy_version, tool, normalized, cwd or "", ",".join(ws)]).encode())
+        h.update("|".join([self.policy_version, tool, normalized, cwd or "", ",".join(ws), extra_hash]).encode())
         return h.hexdigest()[:32]
 
     def cache_get(self, key: str):
@@ -75,6 +75,46 @@ class Store:
                 lk.data = {k: v for k, v in lk.data.items() if now - v.get("ts", 0) <= self.ttl}
             lk.data[key] = {"decision": decision, "reason": reason, "ts": now}
             lk.save()
+
+    # ---- conversational single-use approvals
+    def create_approval(self, conversation_id: str, tool: str, normalized: str, cwd: str | None, ttl_s: int = 300) -> str:
+        token = hashlib.sha256(f"{conversation_id}:{tool}:{normalized}:{cwd}:{time.time()}".encode()).hexdigest()[:6]
+        path = os.path.join(self.state_dir, "approvals.json")
+        with _Locked(path) as lk:
+            now = time.time()
+            # opportunistic cleanup of expired records (>1 hr)
+            if len(lk.data) > 50:
+                lk.data = {k: v for k, v in lk.data.items() if now - v.get("created_at", 0) <= 3600}
+            lk.data[token] = {
+                "conv": conversation_id,
+                "tool": tool,
+                "norm": normalized,
+                "cwd": cwd,
+                "created_at": now,
+                "expires_at": now + ttl_s,
+                "consumed": False,
+            }
+            lk.save()
+        return token
+
+    def consume_approval(self, token: str, conversation_id: str, tool: str, normalized: str, cwd: str | None) -> bool:
+        path = os.path.join(self.state_dir, "approvals.json")
+        if not os.path.exists(path):
+            return False
+        with _Locked(path) as lk:
+            rec = lk.data.get(token)
+            if not rec or rec.get("consumed"):
+                return False
+            now = time.time()
+            if now > rec.get("expires_at", 0):
+                return False
+            if rec.get("conv") and conversation_id and rec.get("conv") != conversation_id:
+                return False
+            if rec.get("tool") != tool or rec.get("norm") != normalized or rec.get("cwd") != cwd:
+                return False
+            rec["consumed"] = True
+            lk.save()
+            return True
 
     # ---- escalation counters
     def bump_denial(self, conversation_id: str, intent: str) -> int:

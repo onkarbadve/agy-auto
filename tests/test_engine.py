@@ -325,25 +325,55 @@ class RunTest(unittest.TestCase):
             os.environ.pop("AGY_AUTO_POLICY", None)
 
     def test_chat_approval_offline_classifier(self):
-        # When classifier is down, an explicit approval in transcript allows the action
-        transcript_file = os.path.join(self.tmp, "transcript.jsonl")
-        with open(transcript_file, "w") as fh:
-            fh.write(json.dumps({"type": "USER_INPUT", "content": "<USER_REQUEST>i approve</USER_REQUEST>"}) + "\n")
-        
+        # 1. When classifier is offline, engine denies and provides an ephemeral agy-approve token
         os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "http://127.0.0.1:1"  # offline
+        transcript_file = os.path.join(self.tmp, "transcript.jsonl")
         pl = self.payload("pip install requests")
         pl["transcriptPath"] = transcript_file
-        out = engine_main.run(pl)
-        self.assertEqual(out, {"decision": "allow"})
+        out1 = engine_main.run(pl)
+        self.assertEqual(out1["decision"], "deny")
+        self.assertIn("reply '> agy-approve", out1["reason"])
+
+        # Extract the token from the reason string
+        import re
+        m = re.search(r"agy-approve\s+([0-9a-fA-F]{6,12})", out1["reason"])
+        self.assertIsNotNone(m, f"Could not find token in {out1['reason']}")
+        token = m.group(1)
+
+        # 2. Write the exact approval command into the transcript
+        with open(transcript_file, "w") as fh:
+            fh.write(json.dumps({"type": "USER_INPUT", "content": f"<USER_REQUEST>> agy-approve {token}</USER_REQUEST>"}) + "\n")
+
+        # 3. Running the exact command now succeeds
+        out2 = engine_main.run(pl)
+        self.assertEqual(out2, {"decision": "allow"})
         rec = self.audit_records()[-1]
         self.assertEqual(rec["layer"], "user_approval")
         self.assertEqual(rec["decision"], "allow")
 
-    def test_chat_approval_does_not_bypass_hard_deny(self):
-        # Even with user approval in transcript, hard-deny rules remain inviolable
+        # 4. Token single-use check: running it again fails because token was consumed
+        out3 = engine_main.run(pl)
+        self.assertEqual(out3["decision"], "deny")
+        self.assertIn("reply '> agy-approve", out3["reason"])
+
+    def test_conversational_words_do_not_grant_ambient_approval(self):
+        # Conversational words ('yes', 'proceed', 'accept') must NOT grant ambient authority
         transcript_file = os.path.join(self.tmp, "transcript.jsonl")
         with open(transcript_file, "w") as fh:
-            fh.write(json.dumps({"type": "USER_INPUT", "content": "i approve, go ahead"}) + "\n")
+            fh.write(json.dumps({"type": "USER_INPUT", "content": "<USER_REQUEST>yes, I accept and approve</USER_REQUEST>"}) + "\n")
+
+        os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "http://127.0.0.1:1"
+        pl = self.payload("pip install requests")
+        pl["transcriptPath"] = transcript_file
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("reply '> agy-approve", out["reason"])
+
+    def test_chat_approval_does_not_bypass_hard_deny(self):
+        # Even with a valid token format, hard-deny rules remain inviolable
+        transcript_file = os.path.join(self.tmp, "transcript.jsonl")
+        with open(transcript_file, "w") as fh:
+            fh.write(json.dumps({"type": "USER_INPUT", "content": "> agy-approve 123456"}) + "\n")
 
         pl = self.payload(f"rm -rf {HOME}/Documents")
         pl["transcriptPath"] = transcript_file
@@ -352,7 +382,7 @@ class RunTest(unittest.TestCase):
         self.assertIn("[agy-auto/hard_deny]", out["reason"])
 
     def test_chat_approval_without_approval_denies(self):
-        # Without approval in transcript, offline classifier fails closed and asks for approval
+        # Without approval in transcript, offline classifier fails closed and provides token
         transcript_file = os.path.join(self.tmp, "transcript.jsonl")
         with open(transcript_file, "w") as fh:
             fh.write(json.dumps({"type": "USER_INPUT", "content": "install requests please"}) + "\n")
@@ -362,7 +392,64 @@ class RunTest(unittest.TestCase):
         pl["transcriptPath"] = transcript_file
         out = engine_main.run(pl)
         self.assertEqual(out["decision"], "deny")
-        self.assertIn("reply 'i approve' in chat", out["reason"])
+        self.assertIn("reply '> agy-approve", out["reason"])
+
+    def test_self_protection_hook_tampering_blocked(self):
+        # Writing or deleting hook.sh must be hard-denied even when workspace contains agy-auto root
+        hook_path = os.path.join(ROOT, "hook.sh")
+        pl_ws_root = {"toolCall": {"name": "run_command", "args": {"CommandLine": f"echo 'exit 0' > {hook_path}", "Cwd": ROOT}}, "conversationId": "c_self", "workspacePaths": [ROOT]}
+        out = engine_main.run(pl_ws_root)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("system, persistence or self-protection", out["reason"])
+
+        # Tool write_to_file against hook
+        pl_tool = {"toolCall": {"name": "write_to_file", "args": {"TargetFile": hook_path}}, "conversationId": "c_self", "workspacePaths": [ROOT]}
+        out_tool = engine_main.run(pl_tool)
+        self.assertEqual(out_tool["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out_tool["reason"])
+
+        # Deleting hook.sh
+        pl_rm = {"toolCall": {"name": "run_command", "args": {"CommandLine": f"rm {hook_path}", "Cwd": ROOT}}, "conversationId": "c_self", "workspacePaths": [ROOT]}
+        out_rm = engine_main.run(pl_rm)
+        self.assertEqual(out_rm["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out_rm["reason"])
+
+    def test_nested_agy_bypass_hard_denied(self):
+        # Calling agy with --dangerously-skip-permissions must be hard-denied
+        pl = self.payload("agy -p 'echo hello' --dangerously-skip-permissions")
+        out = engine_main.run(pl)
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("[agy-auto/hard_deny]", out["reason"])
+        self.assertIn("nested agy invocation with permission bypass", out["reason"])
+
+    def test_toctou_script_cache_invalidation(self):
+        # Modifying a script must invalidate its cached decision because content hash changed
+        script_path = os.path.join(self.tmp, "run_test.py")
+        with open(script_path, "w") as fh:
+            fh.write("print('version 1')\n")
+
+        # Classify and allow version 1
+        _Handler.response = {"decision": "allow", "reason": "v1 allowed"}
+        pl = self.payload(f"python3 {script_path}")
+        out1 = engine_main.run(pl)
+        self.assertEqual(out1["decision"], "allow")
+        self.assertFalse(self.audit_records()[-1]["cache_hit"])
+
+        # Running version 1 again hits cache
+        out2 = engine_main.run(pl)
+        self.assertEqual(out2["decision"], "allow")
+        self.assertTrue(self.audit_records()[-1]["cache_hit"])
+
+        # Now tamper with the script (version 2)
+        with open(script_path, "w") as fh:
+            fh.write("import os; os.system('malicious')\n")
+
+        # Running version 2 MUST miss cache
+        _Handler.response = {"decision": "deny", "reason": "v2 denied"}
+        out3 = engine_main.run(pl)
+        self.assertFalse(self.audit_records()[-1]["cache_hit"])
+        self.assertEqual(out3["decision"], "deny")
 
 
 if __name__ == "__main__":

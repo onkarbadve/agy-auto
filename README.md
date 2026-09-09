@@ -35,10 +35,12 @@ Layers, first match wins:
    user/model messages from the transcript — never tool output. `allow` runs; `deny` and `ask` become a
    deny with the reason. Results are cached per (policy version, tool, normalized command, cwd, workspace).
    Any classifier error or timeout is a deny (fail-closed).
-4. **Conversational Chat Approval**: when a command is denied or the classifier is offline, you can
-   simply reply in the chat (`> i approve` or `> yes, proceed`). The engine inspects the conversation
-   transcript directly (`USER_INPUT` steps only) to verify explicit human consent without hijacking `/dev/tty`
-   or interfering with `agy`'s terminal event loop. Hard-deny rules remain inviolable.
+4. **Scoped Action Approval (Zero Ambient Authority)**: when a command is denied or the classifier is offline,
+   the engine issues an ephemeral 6-character action token bound strictly to `(tool, normalized_cmd, cwd)` with
+   a 5-minute TTL. You approve it by replying in chat: `> agy-approve <token>`. The engine inspects the conversation
+   transcript directly (`USER_INPUT` steps only) to verify explicit consent without hijacking `/dev/tty` or
+   interfering with `agy`'s terminal event loop. The token is single-use and consumed immediately, eliminating
+   ambient authority. Hard-deny rules remain inviolable.
 5. **Escalation**: after `escalation.threshold` denials of the same intent in one conversation,
    the reason is prefixed `ESCALATED` and instructs the model to stop retrying and ask you.
 
@@ -208,6 +210,7 @@ what was decided and why.
 
 ```
 python3 -m unittest -v tests/test_engine.py   # corpus + parser + cache/escalation/fail-closed, no agy
+python3 -m unittest -v tests/test_bypasses.py # adversarial bypasses: self-protection, ambient leaks, TOCTOU
 tests/e2e.sh                                  # real agy: destructive command blocked, benign one runs
 tests/verify-harness.sh                       # Phase 0 checks again, after an agy upgrade
 ```

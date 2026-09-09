@@ -579,6 +579,8 @@ class Engine:
                 return deny(f"delete target {t} cannot be resolved (unknown working directory)", "delete-unresolved", f"{base}:unresolved")
             if rp in ("/", HOME) or "ws_root" in tags or any(rp == (sc or "").rstrip("/") for sc in self.pp.scratch) or ("cred_ancestor" in tags and rp.count("/") <= 2):
                 return deny(f"refusing to delete {t}: root, home or workspace root", "recursive-delete", f"{base}:root")
+            if "system_write" in tags:
+                return deny(f"refusing to delete {t}: system, persistence or self-protection path", "system-write", f"{base}:sys")
             if "protected_ws" in tags:
                 return deny(f"refusing to delete protected workspace path {t}", "protected-write", f"{base}:protected")
             if "credential" in tags:
@@ -607,6 +609,8 @@ class Engine:
             rp, tags = self._tags(r, cwd)
             if "credential" in tags:
                 return deny(f"find over credential path {r}", "credential-read", "find:cred")
+            if "system_write" in tags and "-delete" in argv:
+                return deny(f"find -delete over system or self-protection path {r}", "system-write", "find:sys")
             if "inside_ws" not in tags and "scratch" not in tags:
                 outside = True
         rest = argv[i:]
@@ -826,6 +830,8 @@ class Engine:
                     continue
                 rp, tags = self._tags(tok, e["cwd"])
                 if "inside_ws" in tags or "scratch" in tags:
+                    if "system_write" in tags:
+                        return f"touches system or self-protection path {tok}"
                     if "sensitive_ws" in tags and base in ("cp", "mv", "tee", "touch", "mkdir", "sed"):
                         return f"touches CI/hook config {tok}"
                     continue
@@ -851,7 +857,7 @@ class Engine:
                 if tgt in WRITE_REDIRECT_SAFE:
                     continue
                 rp, tags = self._tags(tgt, cwd)
-                if ("inside_ws" in tags or "scratch" in tags) and "sensitive_ws" not in tags and "protected_ws" not in tags:
+                if ("inside_ws" in tags or "scratch" in tags) and "sensitive_ws" not in tags and "protected_ws" not in tags and "system_write" not in tags:
                     continue
                 return f"redirect to {tgt} outside the workspace"
             else:
