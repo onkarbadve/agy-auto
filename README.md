@@ -5,7 +5,7 @@ Every tool call passes through a policy gate: deterministic hard-deny rules, a d
 fast-allow for read-only and workspace-scoped work, an LLM classifier for everything else, and
 escalation when the model keeps trying the same blocked thing.
 
-**Verified against `agy` 1.1.27 on Fedora 44** — see [HARNESS-BEHAVIORS.md](HARNESS-BEHAVIORS.md)
+**Verified against `agy` 1.1.27 and 1.2.0 on Linux** — see [HARNESS-BEHAVIORS.md](HARNESS-BEHAVIORS.md)
 for every check and the command that produced it. Re-run `tests/verify-harness.sh` after an
 `agy update` and compare.
 
@@ -35,9 +35,14 @@ Layers, first match wins:
    user/model messages from the transcript — never tool output. `allow` runs; `deny` and `ask` become a
    deny with the reason. Results are cached per (policy version, tool, normalized command, cwd, workspace).
    Any classifier error or timeout is a deny (fail-closed).
-4. **Scoped Action Approval (Zero Ambient Authority)**: when a command is denied or the classifier is offline,
+4. **Scoped Action Approval (Zero Ambient Authority)**: When a command is denied or the classifier is offline,
    the engine issues an ephemeral 6-character action token bound strictly to `(tool, normalized_cmd, cwd)` with
-   a 5-minute TTL. You approve it by replying in chat: `> agy-approve <token>`. The engine inspects the conversation
+   a 5-minute TTL.
+
+   > [!IMPORTANT]
+   > **Approval is Token-Only:** To prevent prompt injection and ambient authority leakage, conversational phrases like `"yes"`, `"approve"`, or `"proceed"` are deliberately **ignored**. You approve actions strictly by replying in chat: `> agy-approve <token>`.
+
+   The engine inspects the conversation
    transcript directly (`USER_INPUT` steps only) to verify explicit consent without hijacking `/dev/tty` or
    interfering with `agy`'s terminal event loop. The token is single-use and consumed immediately, eliminating
    ambient authority. Hard-deny rules remain inviolable.
@@ -66,49 +71,56 @@ Not enforceable:
 - When launched with `--dangerously-skip-permissions`, `agy-auto` detects the flag from the parent
   process ancestry and yields immediately (`decision: allow`), honoring user intent while still
   writing an audit log (configurable via `honor_dangerously_skip_permissions = false` in policy.toml).
-- Headless runs (`agy -p`) only get a workspace when you pass `--add-dir <dir>`; without it the
-  engine sees no workspace and treats every path as outside it (more denies, never more allows).
+> [!WARNING]
+> **Headless Mode (`agy -p`):** Headless runs only get a workspace when you pass `--add-dir <dir>` (e.g. `agy --add-dir . -p "..."`). Without `--add-dir`, the engine sees no workspace and treats every path as outside it (resulting in fail-closed denies for file creations).
 - The shell parser is conservative: what it cannot parse is denied, not guessed.
 
-## Quickstart
+## Installation
+
+Choose **Option A** (Global Hook via Installer) or **Option B** (Native Plugin). Do not combine both in the same folder.
+
+### Option A: Global Hook (via Installer)
+
+Clone anywhere (e.g. `~/.local/share/agy-auto`) and run `./install.sh`:
 
 ```bash
-git clone https://github.com/onkarbadve/agy-auto.git ~/.gemini/config/plugins/agy-auto
-cd ~/.gemini/config/plugins/agy-auto && ./install.sh
-```
-
-## Install
-
-### Option A: Global Installer (Recommended)
-
-Run `./install.sh` to register the hook globally, set `toolPermission: always-proceed`, and execute smoke tests:
-
-```bash
+git clone https://github.com/onkarbadve/agy-auto.git ~/.local/share/agy-auto
+cd ~/.local/share/agy-auto
+chmod +x hook.sh
 ./install.sh                  # register hook, set always-proceed, smoke test
 ./install.sh --e2e            # also run tests/e2e.sh (two real agy calls)
 ./install.sh --dry-run-mode   # log decisions, block nothing (for evaluating the policy)
 ./install.sh --uninstall      # cleanly restore previous settings and hook configs
 ```
 
-`install.sh` merges the `agy-auto` key into `~/.gemini/config/hooks.json` (other hooks are kept,
-a `.bak-<timestamp>` copy is written), sets `toolPermission` in
-`~/.gemini/antigravity-cli/settings.json` (backed up too), creates
-`~/.gemini/config/agy-auto/{policy.toml,state,audit}`, runs three hook smoke tests without agy,
-and checks `agy -p "/hooks"` and `agy -p "/config"`.
+`install.sh` merges the `agy-auto` key into `~/.gemini/config/hooks.json` (preserving other hooks,
+backing up to `.bak-<timestamp>`), sets `toolPermission: always-proceed` in
+`~/.gemini/antigravity-cli/settings.json`, creates
+`~/.gemini/config/agy-auto/{policy.toml,state,audit}`, runs hook smoke tests without agy,
+and verifies discovery via `agy -p "/hooks"` and `agy -p "/config"`.
 
-### Option B: Native Antigravity Plugin
+### Option B: Native Antigravity Plugin (Recommended)
 
-`agy-auto` is packaged as an `agy` plugin with a root `plugin.json` and `hooks.json`.
+`agy-auto` is packaged as a native `agy` plugin with root `plugin.json` and `hooks.json`.
 
-* **Per-Project**: Clone into your repository's `.agents/plugins/agy-auto/`:
-  ```bash
-  git clone https://github.com/onkarbadve/agy-auto.git .agents/plugins/agy-auto
-  ```
-* **User-Global**: Clone into `~/.gemini/config/plugins/agy-auto/`:
+* **User-Global Plugin**: Clone into Antigravity's plugin directory:
   ```bash
   git clone https://github.com/onkarbadve/agy-auto.git ~/.gemini/config/plugins/agy-auto
+  chmod +x ~/.gemini/config/plugins/agy-auto/hook.sh
   ```
-*(Note: Ensure `toolPermission: always-proceed` is set in `~/.gemini/antigravity-cli/settings.json` so hooks can gate tool calls).*
+* **Per-Project Plugin**: Clone into your repository's `.agents/plugins/agy-auto/`:
+  ```bash
+  git clone https://github.com/onkarbadve/agy-auto.git .agents/plugins/agy-auto
+  chmod +x .agents/plugins/agy-auto/hook.sh
+  ```
+
+Ensure `toolPermission: "always-proceed"` is set in `~/.gemini/antigravity-cli/settings.json`:
+```json
+{
+  "toolPermission": "always-proceed"
+}
+```
+*(Note: Do not run `./install.sh` if cloning into `~/.gemini/config/plugins/agy-auto`, as Antigravity auto-discovers plugins in that directory. Running both registers duplicate hooks).*
 
 Requirements: `python3` ≥ 3.11 (stdlib only), `agy` on PATH. The hook itself is `sh` + Python.
 
@@ -208,7 +220,10 @@ what was decided and why.
 
 ## Tests
 
-```
+> [!NOTE]
+> **Nested Agent Sessions:** If running tests or `./install.sh` from within an active agent session started with `--dangerously-skip-permissions`, export `AGY_AUTO_HONOR_DANGEROUSLY_SKIP=0` to ensure process-ancestry checks do not bypass test assertions.
+
+```bash
 python3 -m unittest -v tests/test_engine.py   # corpus + parser + cache/escalation/fail-closed, no agy
 python3 -m unittest -v tests/test_bypasses.py # adversarial bypasses: self-protection, ambient leaks, TOCTOU
 tests/e2e.sh                                  # real agy: destructive command blocked, benign one runs
