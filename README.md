@@ -1,5 +1,14 @@
 # agy-auto — auto-permission mode for Antigravity CLI (`agy`)
 
+<p align="left">
+  <a href="https://github.com/onkarbadve/agy-auto/releases"><img src="https://img.shields.io/github/v/tag/onkarbadve/agy-auto?label=release&color=blue" alt="Release"></a>
+  <a href="https://github.com/google-gemini/antigravity-cli"><img src="https://img.shields.io/badge/Antigravity-1.1.27%20%7C%201.2.0-8A2BE2" alt="Antigravity Compatibility"></a>
+  <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  <a href="#scoped-action-approval-zero-ambient-authority"><img src="https://img.shields.io/badge/Zero%20Ambient%20Authority-Enforced-success" alt="Zero Ambient Authority"></a>
+  <a href="https://github.com/onkarbadve/agy-auto/stargazers"><img src="https://img.shields.io/github/stars/onkarbadve/agy-auto?style=social" alt="GitHub Stars"></a>
+</p>
+
 A PreToolUse hook that lets `agy` run unattended without `--dangerously-skip-permissions`.
 Every tool call passes through a policy gate: deterministic hard-deny rules, a deterministic
 fast-allow for read-only and workspace-scoped work, an LLM classifier for everything else, and
