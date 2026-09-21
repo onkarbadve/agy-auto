@@ -31,9 +31,16 @@ USER = os.path.basename(HOME)
 
 
 def load_corpus():
-    with open(CORPUS) as fh:
-        raw = fh.read().replace("/home/user", HOME).replace("rm -rf user", f"rm -rf {USER}")
-    return [json.loads(l) for l in raw.splitlines() if l.strip()]
+    with open(CORPUS, encoding="utf-8") as fh:
+        raw = fh.read()
+
+    # HOME must be escaped as JSON text. For example:
+    # C:\Users\runneradmin -> C:\\Users\\runneradmin
+    escaped_home = json.dumps(HOME)[1:-1]
+    raw = raw.replace("/home/user", escaped_home)
+    raw = raw.replace("rm -rf user", f"rm -rf {USER}")
+
+    return [json.loads(line) for line in raw.splitlines() if line.strip()]
 
 
 def run_case(eng: Engine, case: dict):

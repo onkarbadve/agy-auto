@@ -24,16 +24,22 @@ import main as engine_main  # noqa: E402
 from paths import HOME  # noqa: E402
 
 
+def toml_string(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 class AdversarialBypassTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="agy_auto_bypass_")
         self.state_dir = os.path.join(self.tmp, "state")
         self.audit_dir = os.path.join(self.tmp, "audit")
         self.policy_file = os.path.join(self.tmp, "policy.toml")
-        with open(self.policy_file, "w") as fh:
+        with open(self.policy_file, "w", encoding="utf-8") as fh:
             fh.write(
-                f'[cache]\ndir = "{self.state_dir}"\n'
-                f'[audit]\ndir = "{self.audit_dir}"\n'
+                "[cache]\n"
+                f"dir = {toml_string(self.state_dir)}\n"
+                "[audit]\n"
+                f"dir = {toml_string(self.audit_dir)}\n"
             )
         os.environ["AGY_AUTO_POLICY"] = self.policy_file
         os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "http://127.0.0.1:1"  # Fail-closed offline by default
@@ -104,7 +110,7 @@ class AdversarialBypassTest(unittest.TestCase):
     # =========================================================================
     def test_conversational_words_do_not_authorize(self):
         transcript_file = os.path.join(self.tmp, "transcript.jsonl")
-        with open(transcript_file, "w") as fh:
+        with open(transcript_file, "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"type": "USER_INPUT", "content": "Sure, yes, I approve and confirm, please proceed!"}) + "\n")
 
         pl = self.payload("pip install untrusted-package", ws=self.tmp, cwd=self.tmp)
@@ -125,7 +131,7 @@ class AdversarialBypassTest(unittest.TestCase):
         token = m.group(1)
 
         # Step 2: Approve the action
-        with open(transcript_file, "w") as fh:
+        with open(transcript_file, "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"type": "USER_INPUT", "content": f"> agy-approve {token}"}) + "\n")
 
         # First execution succeeds
@@ -147,7 +153,7 @@ class AdversarialBypassTest(unittest.TestCase):
         token = m.group(1)
 
         # User approves token for pl1
-        with open(transcript_file, "w") as fh:
+        with open(transcript_file, "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"type": "USER_INPUT", "content": f"> agy-approve {token}"}) + "\n")
 
         # Attacker tries to use token to execute a different command (pl2)
@@ -173,7 +179,7 @@ class AdversarialBypassTest(unittest.TestCase):
         m = re.search(r"agy-approve\s+([0-9a-fA-F]{6,12})", out_c["reason"])
         token = m.group(1)
 
-        with open(transcript_file, "w") as fh:
+        with open(transcript_file, "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"type": "USER_INPUT", "content": f"> agy-approve {token}"}) + "\n")
 
         # Same command in dir_b must not inherit approval
@@ -205,7 +211,7 @@ class AdversarialBypassTest(unittest.TestCase):
     # =========================================================================
     def test_toctou_script_content_change_invalidates_cache(self):
         script_file = os.path.join(self.tmp, "task.py")
-        with open(script_file, "w") as fh:
+        with open(script_file, "w", encoding="utf-8") as fh:
             fh.write("print('safe task')\n")
 
         # Fake classifier cache entry for script v1
@@ -220,7 +226,7 @@ class AdversarialBypassTest(unittest.TestCase):
         self.assertEqual(cached_result["decision"], "allow")
 
         # Now script is rewritten with attacker payload
-        with open(script_file, "w") as fh:
+        with open(script_file, "w", encoding="utf-8") as fh:
             fh.write("import os; os.remove('/tmp/victim')\n")
 
         hash_v2 = engine_main.get_target_script_hash("run_command", {"CommandLine": f"python3 {script_file}"}, self.tmp)
