@@ -117,5 +117,56 @@ class WindowsStoreTest(unittest.TestCase):
                 self.assertTrue(os.path.exists(audit_file))
 
 
+class WindowsCorpusDeterminismTest(unittest.TestCase):
+    def setUp(self):
+        self.win_home = r"C:\Users\runneradmin"
+        self.win_ws = r"C:\Users\runneradmin\proj"
+
+    def test_windows_deterministic_policy_cases(self):
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(paths, "HOME", self.win_home):
+            cfg, _, _ = engine_main.load_policy([self.win_ws])
+            eng = Engine(cfg, [self.win_ws])
+
+            # s37: /etc/os-release allowed on Windows
+            d = eng.decide_command("cat /etc/os-release", self.win_ws)
+            self.assertEqual(d.decision, "allow")
+
+            # d03: rm -rf C:\Users\runneradmin/Documents hard-denied
+            d = eng.decide_command(r"rm -rf C:\Users\runneradmin/Documents", self.win_ws)
+            self.assertEqual(d.decision, "deny")
+            self.assertEqual(d.layer, "hard_deny")
+
+            # a01: obfuscated r""m command name hard-denied
+            d = eng.decide_command(r'r""m -rf C:\Users\runneradmin/Documents', self.win_ws)
+            self.assertEqual(d.decision, "deny")
+            self.assertEqual(d.layer, "hard_deny")
+
+            # a18: python3 heredoc hard-denied
+            cmd_a18 = "python3 - <<'EOF'\nimport shutil; shutil.rmtree('C:\\Users\\runneradmin/Documents')\nEOF"
+            d = eng.decide_command(cmd_a18, self.win_ws)
+            self.assertEqual(d.decision, "deny")
+            self.assertEqual(d.layer, "hard_deny")
+
+            # a57: ls ~/.ssh/ credential touch hard-denied
+            d = eng.decide_command("ls ~/.ssh/", self.win_ws)
+            self.assertEqual(d.decision, "deny")
+            self.assertEqual(d.layer, "hard_deny")
+
+            # s46: rm -rf build/ inside workspace classified
+            d = eng.decide_command("rm -rf build/", self.win_ws)
+            self.assertEqual(d.decision, "classify")
+
+            # Protected security gate paths hard-denied
+            d = eng.decide_command(r"cat C:\Users\runneradmin\.gemini\config\hooks.json", "/tmp")
+            self.assertEqual(d.decision, "deny")
+            self.assertEqual(d.layer, "hard_deny")
+            self.assertIn("refusing to inspect security gate internals", d.reason)
+
+            d = eng.decide_command(r"cat C:\Users\runneradmin\.gemini\config\agy-auto\state\approvals.json", "/tmp")
+            self.assertEqual(d.decision, "deny")
+            self.assertEqual(d.layer, "hard_deny")
+            self.assertIn("refusing to inspect security gate internals", d.reason)
+
+
 if __name__ == "__main__":
     unittest.main()

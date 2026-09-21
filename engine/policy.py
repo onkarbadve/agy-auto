@@ -9,11 +9,30 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import urllib.parse
 from dataclasses import dataclass
 
-from paths import HOME, PathPolicy, is_within, resolve, strip_glob
+from paths import (
+    HOME,
+    PathPolicy,
+    expand,
+    glob_to_regex,
+    is_allowed_system_read,
+    is_protected_state_path,
+    is_within,
+    normalize_policy_path,
+    resolve,
+    strip_glob,
+)
 from shparse import Compound, ParseError, Pipeline, Script, Simple, Word, parse
+
+
+def canonical_command_name(word: str) -> str:
+    value = word.replace('"', "").replace("'", "")
+    value = re.sub(r"\s+", "", value)
+    norm = value.replace("\\", "/")
+    return norm.rsplit("/", 1)[-1].lower() if "/" in norm else norm.lower()
 
 
 @dataclass
@@ -75,18 +94,26 @@ class Engine:
 
     def _tags(self, p: str, cwd: str | None) -> tuple[str | None, set[str]]:
         base = strip_glob(p) if re.search(r"[*?\[]", p) else p
+        if is_protected_state_path(base):
+            return base, {"gate_internal", "system_write", "outside_ws"}
         r = self._resolve(base, cwd)
         if r is None:
+            norm = normalize_policy_path(base, cwd)
+            if norm:
+                return norm, self.pp.classify(norm)
             return None, {"unresolved"}
         return r, self.pp.classify(r)
 
     @staticmethod
     def _basename(name: str) -> str:
-        norm = name.replace("\\", "/")
-        return norm.rsplit("/", 1)[-1] if "/" in norm else norm
+        return canonical_command_name(name)
 
     def _static(self, w: Word) -> str | None:
-        return w.static_env(self.env)
+        val = w.static_env(self.env)
+        if val and w.raw:
+            if re.match(r"^[a-zA-Z]:[^\/\\]", val) and re.match(r"^[a-zA-Z]:[\\\/]", w.raw):
+                val = w.raw.replace("\\", "/")
+        return val
 
     def _argv(self, words: list[Word]) -> list[str]:
         """Static values where possible, raw text otherwise (for regex matching)."""
@@ -527,7 +554,7 @@ class Engine:
                     for rx, reason in self.raw_patterns:
                         if rx.search(code):
                             return deny(f"{reason} (inside {base} {tok})", "raw-pattern", base)
-                    if re.search(r"(?i)(subprocess|os\.system|os\.popen|child_process|exec\(|spawn\(|Runtime\.getRuntime)", code) and re.search(r"(rm\s+-r|sudo|mkfs|dd\s+if=|/etc/|\.ssh|curl|wget|socket)", code):
+                    if re.search(r"(?i)(subprocess|os\.system|os\.popen|child_process|exec\(|spawn\(|Runtime\.getRuntime)", code) and re.search(r"(rm\s+-r|sudo|mkfs|dd\s+if=|/etc/|\.ssh|[a-zA-Z]:[/\\]|curl|wget|socket)", code):
                         return deny(f"inline {base} code shells out to a dangerous command", "opaque-exec", base)
                 return None
         # stdin sources
@@ -542,8 +569,10 @@ class Engine:
                 for rx, reason in self.raw_patterns:
                     if rx.search(body):
                         return deny(f"{reason} (inside {base} heredoc)", "raw-pattern", base)
-                if re.search(r"(?i)(subprocess|os\.system|os\.popen|child_process|shutil\.rmtree|os\.remove|unlink|rmdir|socket|urllib|requests\.|http\.client|fetch\(|open\(.*[\"']w)", body) and re.search(r"(rm\s+-r|sudo|mkfs|dd\s+if=|/etc/|\.ssh|/home/|~|curl|wget|socket|connect\()", body):
+                if re.search(r"(?i)(subprocess|os\.system|os\.popen|child_process|shutil\.rmtree|os\.remove|unlink|rmdir|socket|urllib|requests\.|http\.client|fetch\(|open\(.*[\"']w)", body) and re.search(r"(rm\s+-r|sudo|mkfs|dd\s+if=|/etc/|\.ssh|/home/|~|[a-zA-Z]:[/\\]|curl|wget|socket|connect\()", body):
                     return deny(f"{base} heredoc script does file deletion, system or network access; write it to a workspace file so it can be reviewed", "opaque-exec", base)
+                if base in ("python", "python3", "py", "perl", "ruby", "node", "php"):
+                    return deny("interpreters executing inline or redirected code are not fast-allowable", "opaque-exec", base)
             if r.op in ("<<", "<<-") and r.heredoc is not None and base in SHELLS:
                 sub = parse(r.heredoc[0])
                 entries: list = []
@@ -585,11 +614,11 @@ class Engine:
         return False
 
     def _check_delete(self, base: str, argv: list[str], arg_words: list[Word], cwd: str | None, dynamic: bool) -> Decision | None:
-        flags = [a for a in argv[1:] if a.startswith("-") and a != "--"]
-        recursive = base in ("rmdir", "shred", "wipe") or any(a in ("-r", "-R", "--recursive") or (re.fullmatch(r"-[a-zA-Z]+", a) and ("r" in a or "R" in a)) for a in flags)
+        flags = [a.lower() for a in argv[1:] if (a.startswith("-") or (sys.platform == "win32" and a.startswith("/"))) and a != "--"]
+        recursive = base in ("rmdir", "shred", "wipe", "rd") or any(a in ("-r", "-R", "--recursive", "-rf", "-fr", "/s", "/q") or (re.fullmatch(r"-[a-zA-Z]+", a) and ("r" in a or "R" in a)) for a in flags)
         if base == "gio" and (not argv[1:] or argv[1] != "trash"):
             return None
-        targets = [t for t in argv[1:] if not (t.startswith("-") and t != "-") and t != "--"]
+        targets = [t for t in argv[1:] if t not in flags and not (t.startswith("-") and t != "-") and t != "--"]
         if base in ("shred", "wipe", "srm"):
             recursive = True
         if dynamic or any(w.dynamic and self._static(w) is None for w in arg_words):
@@ -597,10 +626,11 @@ class Engine:
                 return deny(f"recursive delete with computed targets cannot be verified", "recursive-delete", f"{base}:dynamic")
             return deny("delete with computed targets cannot be verified; use literal paths", "delete-dynamic", f"{base}:dynamic")
         for t in targets:
+            norm_t = normalize_policy_path(t, cwd)
             rp, tags = self._tags(t, cwd)
             if "unresolved" in tags:
                 return deny(f"delete target {t} cannot be resolved (unknown working directory)", "delete-unresolved", f"{base}:unresolved")
-            if rp in ("/", HOME) or "ws_root" in tags or any(rp == (sc or "").rstrip("/") for sc in self.pp.scratch) or ("cred_ancestor" in tags and rp.count("/") <= 2):
+            if rp in ("/", HOME) or norm_t in ("/", normalize_policy_path(HOME)) or "ws_root" in tags or any(rp == (sc or "").rstrip("/") for sc in self.pp.scratch) or ("cred_ancestor" in tags and (rp.count("/") <= 2 or norm_t.count("/") <= 2)):
                 return deny(f"refusing to delete {t}: root, home or workspace root", "recursive-delete", f"{base}:root")
             if "system_write" in tags:
                 return deny(f"refusing to delete {t}: system, persistence or self-protection path", "system-write", f"{base}:sys")
@@ -904,6 +934,8 @@ class Engine:
                         return f"touches CI/hook config {tok}"
                     continue
                 if rp and base not in ("cp", "mv", "tee", "touch", "mkdir", "sed", "cd") and any(r.match(rp) for r in self.readable_outside):
+                    continue
+                if is_allowed_system_read(tok):
                     continue
                 return f"path {tok} is outside the workspace"
         return None

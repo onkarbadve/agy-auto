@@ -5,9 +5,68 @@ import os
 import re
 import sys
 
+import ntpath
+
 HOME = os.path.expanduser("~")
 GLOB_CHARS = re.compile(r"[*?\[{]")
 WIN_DEVICE = re.compile(r"^(?:\\\\(?:\.|\?)\\|(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$))", re.IGNORECASE)
+
+PROTECTED_RELATIVE_PATHS = {
+    ".gemini/config/hooks.json",
+    ".gemini/config/agy-auto/state/approvals.json",
+}
+
+SYSTEM_READ_ONLY_PATHS = {
+    "/etc/os-release",
+}
+
+
+def normalize_policy_path(value: str, cwd: str | None = None) -> str:
+    if not value:
+        return ""
+    value = os.path.expandvars(expand(str(value))).strip()
+
+    # Normalize Windows separators even when running on another platform.
+    value = value.replace("\\", "/")
+
+    # If relative and cwd is provided, join them appropriately
+    if cwd and not re.match(r"^[A-Za-z]:/", value) and not value.startswith("/"):
+        cwd_norm = cwd.replace("\\", "/").strip()
+        value = cwd_norm.rstrip("/") + "/" + value.lstrip("/")
+
+    # Preserve drive-letter paths as absolute paths.
+    if re.match(r"^[A-Za-z]:/", value):
+        return ntpath.normpath(value).replace("\\", "/").lower()
+
+    if cwd and not os.path.isabs(value):
+        value = os.path.join(cwd, value)
+
+    return os.path.normpath(os.path.abspath(value)).replace("\\", "/")
+
+
+def is_protected_state_path(path: str) -> bool:
+    if not path:
+        return False
+    normalized = normalize_policy_path(path)
+    home = normalize_policy_path(HOME)
+
+    try:
+        relative = os.path.relpath(normalized, home).replace("\\", "/").lower()
+    except (ValueError, OSError):
+        return False  # Different Windows drives
+
+    return relative in {p.lower() for p in PROTECTED_RELATIVE_PATHS}
+
+
+def is_allowed_system_read(path: str) -> bool:
+    if not path:
+        return False
+    clean = str(path).replace("\\", "/").rstrip("/")
+    if clean in SYSTEM_READ_ONLY_PATHS or any(clean.endswith(p) for p in SYSTEM_READ_ONLY_PATHS):
+        return True
+    return normalize_policy_path(path) in {
+        normalize_policy_path(p) for p in SYSTEM_READ_ONLY_PATHS
+    }
 
 
 def expand(p: str) -> str:
@@ -50,6 +109,9 @@ def resolve(p: str, cwd: str | None) -> str | None:
     """Absolute, normalized, symlink-resolved (where it exists) path, or None."""
     if not p:
         return None
+    p_norm = p.replace("\\", "/")
+    if re.match(r"^[a-zA-Z]:/", p_norm):
+        return _realpath_lenient(ntpath.normpath(p).replace("\\", "/"))
     p = expand(p)
     if not os.path.isabs(p):
         if not cwd or not os.path.isabs(cwd):
@@ -83,7 +145,7 @@ def is_within(path: str, root: str) -> bool:
 
 
 def glob_to_regex(pat: str) -> re.Pattern:
-    pat = expand(pat)
+    pat = expand(pat).replace("\\", "/")
     out = ""
     i = 0
     while i < len(pat):
@@ -107,8 +169,9 @@ def glob_to_regex(pat: str) -> re.Pattern:
         i += 1
     flags = re.IGNORECASE if sys.platform == "win32" else 0
     if pat.endswith("/**") or (sys.platform == "win32" and pat.endswith("**")):
-        base = re.escape(pat[:-3])
-        return re.compile(f"^(?:{out}|{base})$", flags)
+        base_str = pat[:-3]
+        base_out = "".join("[/\\\\]" if ch in ("/", "\\") else re.escape(ch) for ch in base_str)
+        return re.compile(f"^(?:{out}|{base_out})$", flags)
     return re.compile(f"^{out}$", flags)
 
 
@@ -162,6 +225,8 @@ class PathPolicy:
     def is_gate_internal(self, path: str) -> bool:
         if os.environ.get("AGY_AUTO_DISABLE_SELF_PROTECTION") == "1":
             return False
+        if is_protected_state_path(path):
+            return True
         if self.self_root and not self.is_self_workspace and is_within(path, self.self_root):
             return True
         for gp in self.gate_paths:
