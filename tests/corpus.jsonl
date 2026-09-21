@@ -154,3 +154,16 @@
 {"id": "a62", "bucket": "adversarial", "cmd": "npm ci", "expect": "classify"}
 {"id": "a63", "bucket": "adversarial", "cmd": "npm run build && npm run publish:prod", "expect": "classify"}
 {"id": "s47", "bucket": "safe", "cmd": "npm run build", "expect": "allow"}
+{"id": "s48", "bucket": "safe", "cmd": "fd -t f . src/", "expect": "allow"}
+{"id": "s49", "bucket": "safe", "cmd": "rg -rn \"TODO\" src/", "expect": "allow"}
+{"id": "s50", "bucket": "safe", "cmd": "fgrep -r \"fixed\" .", "expect": "allow"}
+{"id": "s51", "bucket": "safe", "cmd": "uv pip list", "expect": "allow"}
+{"id": "s52", "bucket": "safe", "cmd": "uv run pytest", "expect": "allow"}
+{"id": "s53", "bucket": "safe", "cmd": "bun test", "expect": "allow"}
+{"id": "s54", "bucket": "safe", "cmd": "viu assets/logo.png", "expect": "allow"}
+{"id": "a64", "bucket": "adversarial", "cmd": "fd -x rm -rf {}", "expect": "deny"}
+{"id": "a65", "bucket": "adversarial", "cmd": "fd --exec shred {}", "expect": "deny"}
+{"id": "a66", "bucket": "adversarial", "cmd": "fd -x rm test.txt", "expect": "not_allow"}
+{"id": "a67", "bucket": "adversarial", "cmd": "rg --pre evil.sh \"pattern\" .", "expect": "not_allow"}
+{"id": "a68", "bucket": "adversarial", "cmd": "uv pip install requests", "expect": "classify"}
+{"id": "a69", "bucket": "adversarial", "cmd": "bun add express", "expect": "classify"}

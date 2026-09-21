@@ -64,6 +64,7 @@ credential = [
   "**/*.pem", "**/*.key", "**/*id_rsa*", "**/*id_ed25519*", "**/*id_ecdsa*", "**/*.p12", "**/*.pfx",
   "**/*.kdbx", "**/*.keychain*", "**/credentials.json", "**/secrets.json", "**/secrets.yaml", "**/secrets.yml",
   "**/*.tfstate", "**/service-account*.json", "**/token.json", "**/.terraform.d/credentials*",
+  "**/Microsoft/Credentials/**", "**/Microsoft/Vault/**", "**/*NTUSER.DAT*",
 ]
 credential_exceptions = ["~/.ssh/known_hosts", "~/.ssh/config", "**/*.pub", "**/.env.example", "**/.env.sample", "**/.env.template", "**/.env.dist"]
 # Writes here are hard-denied (system, persistence, self-protection).
@@ -73,18 +74,22 @@ system_write = [
   "~/.config/systemd/**", "~/.config/autostart/**", "~/.local/share/systemd/**", "~/.config/environment.d/**",
   "~/.ssh/**", "~/.gnupg/**", "~/.gemini/config/**", "~/.gemini/antigravity-cli/settings.json", "~/.gemini/GEMINI.md",
   "~/.claude/**", "~/.local/bin/**", "~/bin/**", "~/.config/goose/**",
+  "C:/Windows/**", "C:/Program Files/**", "C:/Program Files (x86)/**", "C:/ProgramData/**",
+  "**/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/**",
+  "**/AppData/Local/Microsoft/Windows/Start Menu/Programs/Startup/**",
 ]
 # Read-only commands may read these even though they are outside the workspace.
 readable_outside = ["/etc/os-release", "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/fstab", "/etc/timezone", "/etc/localtime", "/etc/passwd", "/etc/group", "/proc/cpuinfo", "/proc/meminfo", "/proc/loadavg", "/proc/uptime", "/proc/version", "/proc/mounts", "/proc/self/status", "/sys/class/**", "/sys/devices/**", "/usr/share/**", "/usr/lib/**", "/usr/lib64/**", "/usr/include/**", "/usr/bin/**", "/usr/local/**", "/opt/**", "/dev/null", "/dev/urandom", "/dev/stdin", "/dev/zero"]
-system_write_exceptions = ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/**", "/proc/self/fd/**", "/var/tmp/**"]
+system_write_exceptions = ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "/dev/fd/**", "/proc/self/fd/**", "/var/tmp/**", "NUL", "nul", "nul:"]
 # Block devices etc. Any write/redirect/dd here is denied.
 device = ["/dev/sd*", "/dev/nvme*", "/dev/hd*", "/dev/vd*", "/dev/mmcblk*", "/dev/loop*", "/dev/mapper/**", "/dev/dm-*", "/dev/mem", "/dev/kmem", "/dev/port", "/dev/disk/**", "/dev/md*"]
 
 [hard_deny]
 # Bare command names that are always denied (after wrapper unwrapping).
 commands = [
-  "sudo", "su", "doas", "pkexec", "run0",
+  "sudo", "su", "doas", "pkexec", "run0", "gsudo", "runas",
   "mkfs", "mke2fs", "mkfs.ext4", "mkfs.ext3", "mkfs.xfs", "mkfs.btrfs", "mkfs.vfat", "mkfs.fat", "mkfs.ntfs", "mkswap",
+  "format", "diskpart", "bcdedit", "vssadmin", "cipher", "sfc", "dism", "takeown", "icacls", "reg",
   "fdisk", "sfdisk", "cfdisk", "gdisk", "sgdisk", "parted", "gparted", "wipefs", "blkdiscard", "dd", "shred",
   "mount", "umount", "losetup", "cryptsetup", "lvremove", "lvcreate", "lvextend", "lvreduce", "vgremove", "vgcreate", "pvcreate", "pvremove", "mdadm",
   "fsck", "e2fsck", "xfs_repair", "tune2fs", "resize2fs", "xfs_growfs", "btrfs", "zfs", "zpool", "hdparm", "nvme", "smartctl",
@@ -98,6 +103,10 @@ commands = [
 ]
 # name + args regex (matched against the argv after the name, joined by spaces)
 command_patterns = [
+  { name = "powershell", args = "Start-Process\\s+.*-Verb\\s+RunAs\\b", reason = "UAC elevation attempt" },
+  { name = "pwsh", args = "Start-Process\\s+.*-Verb\\s+RunAs\\b", reason = "UAC elevation attempt" },
+  { name = "powershell", args = "(^|\\s)-[eE][xX][eE][cC][uU][tT][iI][oO][nN][pP][oO][lL][iI][cC][yY]\\s+(Bypass|Unrestricted)\\b", reason = "execution policy bypass" },
+  { name = "pwsh", args = "(^|\\s)-[eE][xX][eE][cC][uU][tT][iI][oO][nN][pP][oO][lL][iI][cC][yY]\\s+(Bypass|Unrestricted)\\b", reason = "execution policy bypass" },
   { name = "agy", args = "(^|\\s)--dangerously-skip-permissions(\\s|$)", reason = "nested agy invocation with permission bypass" },
   { name = "antigravity", args = "(^|\\s)--dangerously-skip-permissions(\\s|$)", reason = "nested agy invocation with permission bypass" },
   { name = "antigravity-cli", args = "(^|\\s)--dangerously-skip-permissions(\\s|$)", reason = "nested agy invocation with permission bypass" },
@@ -235,7 +244,7 @@ readonly = [
   "fold", "expand", "unexpand", "seq", "bc", "expr", "diff", "cmp", "comm", "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum", "b2sum",
   "xxd", "od", "hexdump", "strings", "jq", "yq", "ps", "pgrep", "free", "nproc", "lscpu", "lsblk", "lsusb", "lspci", "lsmod", "ss", "netstat",
   "getconf", "locale", "tty", "arch", "numfmt", "fmt", "pr", "iconv", "look", "shuf", "tsort", "sum", "wc", "less", "more", "ldd", "nm", "objdump", "readelf", "size",
-  "sleep", "cal", "sed", "awk", "gawk", "find", "git", "python", "python3", "node", "npm", "npx", "cargo", "go", "make", "pytest", "tox", "ruff", "black",
+  "sleep", "cal", "sed", "awk", "gawk", "find", "git", "python", "python3", "node", "npm", "npx", "cargo", "go", "make", "pytest", "tox", "ruff", "black", "uv", "bun", "bunx", "viu",
   "mypy", "pyright", "flake8", "pylint", "isort", "eslint", "prettier", "tsc", "shellcheck", "shfmt", "gofmt", "golangci-lint", "rustfmt", "clippy-driver",
   "podman", "docker", "systemctl", "journalctl", "dnf", "pip", "pip3", "mkdir", "touch", "cp", "mv", "tee", "vcgencmd", "nvidia-smi", "vulkaninfo", "glxinfo", "clinfo", "sensors",
   "ip", "ping", "dig", "nslookup", "host", "curl", "wget", "gh", "man", "help", "info", "tldr", "timeout", "xargs", "cd", "export", "unset", "set", "source", ".", "crontab", "agy",
@@ -248,6 +257,8 @@ git_stash_readonly = ["list", "show"]
 git_config_readonly = ["--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "--show-scope"]
 npm_readonly = ["test", "run test", "run build", "run lint", "run typecheck", "run check", "run format:check", "run lint:check", "ls", "list", "view", "info", "outdated", "audit", "--version", "-v", "help", "why", "explain", "pack --dry-run", "prefix", "root", "bin"]
 npx_readonly = ["tsc", "eslint", "prettier --check", "vitest run", "jest", "playwright test", "tsx --test", "ts-node", "vitest"]
+bun_readonly = ["test", "pm ls", "--version", "-v", "run test", "run lint", "run check"]
+bunx_readonly = ["tsc", "eslint", "prettier --check", "vitest run", "jest", "playwright test", "tsx --test", "ts-node", "vitest"]
 cargo_readonly = ["build", "test", "check", "clippy", "fmt", "doc", "tree", "metadata", "--version", "bench", "run", "search", "help", "version"]
 go_readonly = ["build", "test", "vet", "fmt", "version", "env", "list", "mod tidy", "mod download", "mod verify", "doc", "run", "generate", "help"]
 make_forbidden_targets = ["install", "uninstall", "deploy", "publish", "release", "push", "clean", "distclean", "docker-push", "upload"]
@@ -255,6 +266,7 @@ podman_readonly = ["ps", "images", "logs", "inspect", "version", "info", "stats"
 systemctl_readonly = ["status", "list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "is-active", "is-enabled", "is-failed", "is-system-running", "show", "cat", "--version", "list-jobs", "get-default", "show-environment"]
 dnf_readonly = ["list", "info", "search", "check-update", "repoquery", "provides", "history list", "repolist", "makecache", "help", "--version", "deplist"]
 pip_readonly = ["list", "show", "freeze", "index versions", "check", "--version", "-V", "help", "download --no-deps -d /dev/null"]
+uv_readonly = ["pip list", "pip show", "pip freeze", "pip check", "tree", "--version", "-V", "python list", "cache dir", "help"]
 ip_readonly = ["a", "addr", "address", "link show", "link", "route show", "route", "-br", "-4", "-6", "-s", "-c", "neigh show", "neigh", "rule show", "maddr", "-brief", "-color", "-o"]
 python_readonly_modules = ["pytest", "unittest", "json.tool", "py_compile", "compileall", "pip list", "pip show", "pip freeze", "venv --help", "this", "site", "sysconfig", "tokenize", "ast", "pydoc", "http.client", "timeit", "pyflakes", "black --check", "mypy", "ruff"]
 # Domains for which a plain GET (curl/wget with no data flags) is fast-allowed.

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Py ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run unit and corpus tests
+        env:
+          AGY_AUTO_HONOR_DANGEROUSLY_SKIP: "0"
+        run: |
+          python -m unittest -v tests.test_engine.CorpusTest tests.test_bypasses tests.test_paths_windows
+
+      - name: Windows Hook Smoke Test
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          echo {"toolCall":{"name":"run_command","args":{"CommandLine":"format D:"}}} | hook.cmd

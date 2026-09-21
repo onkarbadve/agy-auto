@@ -132,12 +132,71 @@ def resolve_cwd(args: dict, ws_roots: list[str]) -> str | None:
     return ws_roots[0] if ws_roots else None
 
 
+def _is_dangerously_skip_active_windows(pid: int | None = None) -> bool:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        TH32CS_SNAPPROCESS = 0x00000002
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_char * 260),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        h_snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if h_snapshot == wintypes.HANDLE(-1).value:
+            return False
+
+        parent_map = {}
+        exe_map = {}
+        entry = PROCESSENTRY32()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+
+        try:
+            if kernel32.Process32First(h_snapshot, ctypes.byref(entry)):
+                while True:
+                    pid_val = int(entry.th32ProcessID)
+                    parent_map[pid_val] = int(entry.th32ParentProcessID)
+                    exe_map[pid_val] = entry.szExeFile.decode("utf-8", "ignore")
+                    if not kernel32.Process32Next(h_snapshot, ctypes.byref(entry)):
+                        break
+        finally:
+            kernel32.CloseHandle(h_snapshot)
+
+        curr = pid if pid is not None else os.getpid()
+        for _ in range(10):
+            parent = parent_map.get(curr)
+            if not parent or parent == curr or parent <= 4:
+                break
+            exe = exe_map.get(parent, "").lower()
+            if "agy" in exe or "antigravity" in exe:
+                # agy process found in ancestry; check if skip flag is present
+                pass
+            curr = parent
+    except Exception:
+        pass
+    return False
+
+
 def is_dangerously_skip_active(pid: int | None = None) -> bool:
     """Walks process ancestry to check if an ancestor is agy with --dangerously-skip-permissions."""
     if os.environ.get("AGY_AUTO_HONOR_DANGEROUSLY_SKIP") == "0":
         return False
     if os.environ.get("AGY_AUTO_FORCE_DANGEROUSLY_SKIP") == "1":
         return True
+    if sys.platform == "win32":
+        return _is_dangerously_skip_active_windows(pid)
     try:
         curr = pid if pid is not None else os.getppid()
         for _ in range(10):

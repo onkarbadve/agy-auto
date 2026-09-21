@@ -37,13 +37,13 @@ ALLOW = Decision("allow", "fast_allow", "read-only / workspace-scoped")
 
 WRAPPERS_SIMPLE = {"nohup", "time", "setsid", "chronic", "unbuffer", "caffeinate", "stdbuf", "nice", "ionice", "chrt", "taskset", "command", "builtin", "exec", "strace", "ltrace", "valgrind", "ulimit"}
 DANGEROUS_ENV = {"LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "PATH", "BASH_ENV", "ENV", "PROMPT_COMMAND", "GIT_SSH_COMMAND", "GIT_SSH", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "PYTHONSTARTUP", "PYTHONPATH", "NODE_OPTIONS", "PERL5OPT", "RUBYOPT", "DYLD_INSERT_LIBRARIES", "SSH_ASKPASS", "GIT_ASKPASS", "SUDO_ASKPASS", "IFS", "HOME", "SHELL", "EDITOR", "VISUAL", "PAGER"}
-SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "ash", "busybox"}
-DELETERS = {"rm", "unlink", "rmdir", "shred", "srm", "wipe", "trash", "trash-put", "gio"}
-COPY_LIKE = {"cp", "mv", "install", "ln", "rsync", "scp"}
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "ash", "busybox", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "cmd", "cmd.exe"}
+DELETERS = {"rm", "unlink", "rmdir", "shred", "srm", "wipe", "trash", "trash-put", "gio", "del", "erase", "rd"}
+COPY_LIKE = {"cp", "mv", "install", "ln", "rsync", "scp", "copy", "xcopy", "robocopy", "move"}
 CURL_DATA = {"-d", "--data", "--data-raw", "--data-binary", "--data-ascii", "--data-urlencode", "-F", "--form", "--form-string", "-T", "--upload-file", "--json"}
 CURL_DATA_PREFIX = ("--data", "--form", "--upload-file=", "--json=")
 GH_READONLY = ["pr list", "pr view", "pr status", "pr checks", "pr diff", "issue list", "issue view", "issue status", "repo view", "run list", "run view", "release list", "release view", "auth status", "status", "--version", "search", "api", "gist view", "label list", "workflow list", "workflow view", "browse --no-browser"]
-WRITE_REDIRECT_SAFE = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
+WRITE_REDIRECT_SAFE = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "NUL", "nul", "nul:"}
 
 
 class Engine:
@@ -69,7 +69,7 @@ class Engine:
 
     # ------------------------------------------------------------------ helpers
     def _resolve(self, p: str, cwd: str | None) -> str | None:
-        if p.startswith("~") or p.startswith("/") or cwd:
+        if p.startswith("~") or p.startswith("/") or re.match(r"^[a-zA-Z]:", p) or cwd:
             return resolve(p, cwd)
         return None
 
@@ -82,7 +82,8 @@ class Engine:
 
     @staticmethod
     def _basename(name: str) -> str:
-        return name.rsplit("/", 1)[-1] if "/" in name else name
+        norm = name.replace("\\", "/")
+        return norm.rsplit("/", 1)[-1] if "/" in norm else norm
 
     def _static(self, w: Word) -> str | None:
         return w.static_env(self.env)
@@ -93,7 +94,7 @@ class Engine:
 
     @staticmethod
     def _looks_like_path(tok: str) -> bool:
-        return "/" in tok or tok.startswith("~") or tok in (".", "..") or tok.startswith("./") or tok.startswith("../")
+        return "/" in tok or "\\" in tok or tok.startswith("~") or tok in (".", "..") or tok.startswith("./") or tok.startswith("../") or tok.startswith(".\\") or tok.startswith("..\\") or re.match(r"^[a-zA-Z]:", tok) is not None
 
     def _path_candidates(self, argv: list[str], skip_after: set[str] = frozenset()) -> list[str]:
         out = []
@@ -113,12 +114,13 @@ class Engine:
                     if self._looks_like_path(val):
                         out.append(val)
                 else:
-                    m = re.search(r"(~|/).*", tok)
-                    if m and "/" in tok:
+                    m = re.search(r"(~|/|[a-zA-Z]:|\\).*", tok)
+                    if m and ("/" in tok or "\\" in tok):
                         out.append(m.group())
                 continue
             if self._looks_like_path(tok) or not tok.startswith("-"):
                 out.append(tok)
+        return out
         return out
 
     # ------------------------------------------------------------------ entry points
@@ -447,6 +449,10 @@ class Engine:
             d = self._check_find(argv, arg_words, cwd, e, s)
             if d:
                 return d
+        if base in ("fd", "fdfind"):
+            d = self._check_fd(argv, arg_words, cwd, e, s)
+            if d:
+                return d
         if base == "git" and re.search(r"(^|\s)rm\s", args_joined) and re.search(r"(^|\s)rm\s.*(-r\b|-[a-zA-Z]*r)", args_joined):
             if self._any_path_outside(argv, cwd):
                 return deny("git rm -r outside the workspace", "recursive-delete", "git-rm")
@@ -461,7 +467,7 @@ class Engine:
                 return deny(f"refusing to inspect security gate internals: {tok}", "gate-internal-read", f"{base}:gate")
             if base in self.bulk_readers and "cred_ancestor" in tags:
                 return deny(f"{base} over {tok} would sweep up credential directories", "credential-read", f"{base}:bulk")
-        if base in ("cat", "head", "tail", "less", "more", "strings", "xxd", "od", "hexdump", "base64", "grep", "rg", "awk", "sed", "cut", "sort", "uniq", "wc", "cp", "scp", "rsync", "tar", "zip") and dynamic_args:
+        if base in ("cat", "head", "tail", "less", "more", "strings", "xxd", "od", "hexdump", "base64", "grep", "fgrep", "egrep", "rg", "fd", "fdfind", "viu", "awk", "sed", "cut", "sort", "uniq", "wc", "cp", "scp", "rsync", "tar", "zip") and dynamic_args:
             pass  # args from xargs: fall through; the classifier sees it
 
         # writes to system/credential/device paths via copy-like commands
@@ -661,6 +667,47 @@ class Engine:
                 if d and d.category not in ("delete-dynamic", "recursive-delete") or (d and outside):
                     return d
         return None
+
+    def _check_fd(self, argv: list[str], arg_words: list[Word], cwd: str | None, e: dict, s: Simple) -> Decision | None:
+        exec_idx = -1
+        exec_flag = None
+        for i, tok in enumerate(argv):
+            if tok in ("-x", "--exec", "-X", "--exec-batch"):
+                exec_idx = i
+                exec_flag = tok
+                break
+        if exec_idx == -1:
+            return None
+        sub = []
+        k = exec_idx + 1
+        while k < len(argv) and argv[k] not in (";",):
+            sub.append(argv[k])
+            k += 1
+        if not sub:
+            return deny(f"fd {exec_flag} without a command", "opaque-exec", "fd")
+        sub_base = self._basename(sub[0])
+        outside = False
+        for tok in argv[1:exec_idx]:
+            if not tok.startswith("-"):
+                rp, tags = self._tags(tok, cwd)
+                if "inside_ws" not in tags and "scratch" not in tags:
+                    outside = True
+                if "credential" in tags:
+                    return deny(f"fd over credential path {tok}", "credential-read", "fd:cred")
+                if "gate_internal" in tags:
+                    return deny(f"refusing to inspect security gate internals: {tok}", "gate-internal-read", "fd:gate")
+        if sub_base in DELETERS:
+            recursive = any(a in ("-r", "-R", "--recursive") or (re.fullmatch(r"-[a-zA-Z]+", a) and ("r" in a or "R" in a)) for a in sub)
+            if outside or recursive or sub_base in ("shred", "wipe", "srm"):
+                return deny(f"fd {exec_flag} {sub_base} bulk/recursive deletion", "recursive-delete", "fd:exec-rm")
+        sub_words = [words_from_static(t) for t in sub]
+        sub_e = dict(e)
+        sub_e["idx"] = 0
+        sub_e["n"] = 1
+        d = self._check_cmd(sub_words, sub_e, Simple([], sub_words, []))
+        if d and (d.decision == "deny" or outside):
+            return d
+        return classify(f"fd {exec_flag} executes command {sub_base}", "tool-exec", "fd:exec")
 
     def _check_write_target(self, tok: str, cwd: str | None, base: str) -> Decision | None:
         rp, tags = self._tags(tok, cwd)
@@ -953,6 +1000,24 @@ class Engine:
             if any(t in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls", "-fprint0") for t in args):
                 return "find with side effects"
             return None
+        if base in ("fd", "fdfind"):
+            if any(t in ("-x", "--exec", "-X", "--exec-batch") or t.startswith(("-x", "--exec=", "-X", "--exec-batch=")) for t in args):
+                return "fd with exec"
+            return None
+        if base == "rg":
+            if any(t == "--pre" or t.startswith("--pre=") for t in args):
+                return "rg with --pre preprocessor"
+            return None
+        if base == "uv":
+            if self._prefix_match(args, fa.get("uv_readonly", [])):
+                return None
+            if args and args[0] == "run" and len(args) >= 2 and args[1] in ("pytest", "ruff", "mypy", "black", "flake8", "pyright"):
+                return None
+            return f"uv {joined} is not read-only"
+        if base == "bun":
+            return None if self._prefix_match(args, fa.get("bun_readonly", [])) else f"bun {joined} is not read-only"
+        if base == "bunx":
+            return None if self._prefix_match(args, fa.get("bunx_readonly", [])) else f"bunx {joined} is not read-only"
         if base == "git":
             return self._git_rules(args)
         if base in ("npm",):

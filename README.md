@@ -93,6 +93,7 @@ Choose **Option A** (Global Hook via Installer) or **Option B** (Native Plugin).
 Clone anywhere (e.g. `~/.local/share/agy-auto`) and run `./install.sh`:
 
 ```bash
+# Linux / macOS
 git clone https://github.com/onkarbadve/agy-auto.git ~/.local/share/agy-auto
 cd ~/.local/share/agy-auto
 chmod +x hook.sh
@@ -102,11 +103,18 @@ chmod +x hook.sh
 ./install.sh --uninstall      # cleanly restore previous settings and hook configs
 ```
 
-`install.sh` merges the `agy-auto` key into `~/.gemini/config/hooks.json` (preserving other hooks,
-backing up to `.bak-<timestamp>`), sets `toolPermission: always-proceed` in
-`~/.gemini/antigravity-cli/settings.json`, creates
-`~/.gemini/config/agy-auto/{policy.toml,state,audit}`, runs hook smoke tests without agy,
-and verifies discovery via `agy -p "/hooks"` and `agy -p "/config"`.
+```powershell
+# Windows (PowerShell)
+git clone https://github.com/onkarbadve/agy-auto.git $env:USERPROFILE\.local\agy-auto
+cd $env:USERPROFILE\.local\agy-auto
+.\install.ps1                 # register hook (hook.cmd), set always-proceed
+.\install.ps1 -DryRunMode     # log decisions, block nothing
+.\install.ps1 -Uninstall      # restore previous settings and unregister hook
+```
+
+`install.sh` and `install.ps1` merge the `agy-auto` key into `hooks.json` (preserving other hooks,
+backing up to `.bak-<timestamp>`), set `toolPermission: always-proceed` in
+settings, create state/audit directories, and run hook smoke tests without agy.
 
 ### Option B: Native Antigravity Plugin (Recommended)
 

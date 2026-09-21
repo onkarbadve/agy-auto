@@ -3,19 +3,39 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 
 HOME = os.path.expanduser("~")
 GLOB_CHARS = re.compile(r"[*?\[{]")
+WIN_DEVICE = re.compile(r"^(?:\\\\(?:\.|\?)\\|(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$))", re.IGNORECASE)
 
 
 def expand(p: str) -> str:
-    if p == "~" or p.startswith("~/"):
+    if p == "~":
+        return HOME
+    if p.startswith("~/") or p.startswith("~\\"):
         return HOME + p[1:]
+    return p
+
+
+def _get_long_path_name(p: str) -> str:
+    if sys.platform != "win32":
+        return p
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        res = ctypes.windll.kernel32.GetLongPathNameW(p, buf, 1024)
+        if 0 < res < 1024:
+            return buf.value
+    except Exception:
+        pass
     return p
 
 
 def _realpath_lenient(p: str) -> str:
     try:
+        if sys.platform == "win32":
+            p = _get_long_path_name(p)
         if os.path.lexists(p):
             return os.path.realpath(p)
         parent, name = os.path.split(p)
@@ -43,14 +63,23 @@ def strip_glob(p: str) -> str:
     m = GLOB_CHARS.search(p)
     if not m:
         return p
-    head = p[:m.start()]
+    head = p[:m.start()].replace("\\", "/")
     return head.rsplit("/", 1)[0] if "/" in head else "."
 
 
+def _norm_for_cmp(p: str) -> str:
+    p = p.replace("\\", "/").rstrip("/")
+    if sys.platform == "win32":
+        p = p.lower()
+    return p or "/"
+
+
 def is_within(path: str, root: str) -> bool:
-    path = path.rstrip("/") or "/"
-    root = root.rstrip("/") or "/"
-    return path == root or path.startswith(root + "/")
+    p = _norm_for_cmp(path)
+    r = _norm_for_cmp(root)
+    if r == "/" or (sys.platform == "win32" and re.match(r"^[a-z]:/?$", r)):
+        return p == r or p.startswith(r.rstrip("/") + "/")
+    return p == r or p.startswith(r + "/")
 
 
 def glob_to_regex(pat: str) -> re.Pattern:
@@ -59,8 +88,8 @@ def glob_to_regex(pat: str) -> re.Pattern:
     i = 0
     while i < len(pat):
         c = pat[i]
-        if pat.startswith("**/", i):
-            out += "(?:.*/)?"
+        if pat.startswith("**/", i) or (sys.platform == "win32" and pat.startswith("**\\", i)):
+            out += "(?:.*[/\\\\])?" if sys.platform == "win32" else "(?:.*/)?"
             i += 3
             continue
         if pat.startswith("**", i):
@@ -68,17 +97,19 @@ def glob_to_regex(pat: str) -> re.Pattern:
             i += 2
             continue
         if c == "*":
-            out += "[^/]*"
+            out += "[^/\\\\]*" if sys.platform == "win32" else "[^/]*"
         elif c == "?":
-            out += "[^/]"
+            out += "[^/\\\\]" if sys.platform == "win32" else "[^/]"
+        elif sys.platform == "win32" and c in ("/", "\\"):
+            out += "[/\\\\]"
         else:
             out += re.escape(c)
         i += 1
-    # a pattern ending in /** also matches the directory itself
-    if pat.endswith("/**"):
+    flags = re.IGNORECASE if sys.platform == "win32" else 0
+    if pat.endswith("/**") or (sys.platform == "win32" and pat.endswith("**")):
         base = re.escape(pat[:-3])
-        return re.compile(f"^(?:{out}|{base})$")
-    return re.compile(f"^{out}$")
+        return re.compile(f"^(?:{out}|{base})$", flags)
+    return re.compile(f"^{out}$", flags)
 
 
 class PathPolicy:
@@ -118,9 +149,9 @@ class PathPolicy:
         self.cred_prefixes = []
         for p in paths.get("credential", []):
             p = expand(p)
-            if p.startswith("**") or not p.startswith("/"):
+            if p.startswith("**") or not (p.startswith("/") or (sys.platform == "win32" and re.match(r"^[a-zA-Z]:", p))):
                 continue
-            self.cred_prefixes.append(strip_glob(p).rstrip("/"))
+            self.cred_prefixes.append(strip_glob(p).rstrip("/\\"))
 
     # -- primitives
     def is_self_path(self, path: str) -> bool:
@@ -148,6 +179,8 @@ class PathPolicy:
         return any(is_within(pref, path) and pref != path for pref in self.cred_prefixes)
 
     def is_device(self, path: str) -> bool:
+        if sys.platform == "win32" and WIN_DEVICE.search(path):
+            return True
         return any(r.match(path) for r in self.device)
 
     def is_system_write(self, path: str) -> bool:
@@ -171,6 +204,11 @@ class PathPolicy:
         if not root:
             return False
         rel = os.path.relpath(path, root)
+        if sys.platform == "win32":
+            rel = rel.replace("\\", "/").lower()
+            names = [n.replace("\\", "/").lower() for n in names]
+        else:
+            rel = rel.replace("\\", "/")
         for n in names:
             if rel == n or rel.startswith(n.rstrip("/") + "/"):
                 return True
@@ -183,7 +221,8 @@ class PathPolicy:
         return self.ws_relative_flag(path, self.sensitive)
 
     def is_ws_root(self, path: str) -> bool:
-        return any((path.rstrip("/") or "/") == r for r in self.ws_roots)
+        norm = _norm_for_cmp(path)
+        return any(norm == _norm_for_cmp(r) for r in self.ws_roots)
 
     def classify(self, path: str) -> set[str]:
         """Tags for an absolute path."""
@@ -213,6 +252,7 @@ class PathPolicy:
             tags.add("outside_ws")
             if is_within(path, HOME):
                 tags.add("home")
-        if path in ("/", HOME) or self.is_credential_ancestor(path):
+        is_root = (re.match(r"^[a-zA-Z]:/?$", path) is not None) if sys.platform == "win32" else (path == "/")
+        if is_root or path == HOME or self.is_credential_ancestor(path):
             tags.add("cred_ancestor")
         return tags
