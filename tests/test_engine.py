@@ -149,11 +149,14 @@ class RunTest(unittest.TestCase):
         os.environ["AGY_AUTO_HONOR_DANGEROUSLY_SKIP"] = "0"
         os.environ.pop("AGY_AUTO_FORCE_DANGEROUSLY_SKIP", None)
         os.environ["AGY_AUTO_NO_TTY"] = "1"
+        os.environ["AGY_AUTO_USER_POLICY"] = ""
         _Handler.response = {"decision": "allow", "reason": "mock allow"}
         _Handler.calls = 0
 
     def tearDown(self):
+        os.environ.pop("AGY_AUTO_DRY_RUN", None)
         os.environ.pop("AGY_AUTO_NO_TTY", None)
+        os.environ.pop("AGY_AUTO_USER_POLICY", None)
 
     def payload(self, cmd, conv="conv-1", step=1):
         return {"toolCall": {"name": "run_command", "args": {"CommandLine": cmd, "Cwd": WS}}, "conversationId": conv, "stepIdx": step, "workspacePaths": [WS]}

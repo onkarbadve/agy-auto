@@ -39,12 +39,14 @@ class AdversarialBypassTest(unittest.TestCase):
         os.environ["AGY_AUTO_CLASSIFIER_ENDPOINT"] = "http://127.0.0.1:1"  # Fail-closed offline by default
         os.environ["AGY_AUTO_HONOR_DANGEROUSLY_SKIP"] = "0"
         os.environ.pop("AGY_AUTO_FORCE_DANGEROUSLY_SKIP", None)
+        os.environ["AGY_AUTO_USER_POLICY"] = ""
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
         os.environ.pop("AGY_AUTO_POLICY", None)
         os.environ.pop("AGY_AUTO_CLASSIFIER_ENDPOINT", None)
         os.environ.pop("AGY_AUTO_HONOR_DANGEROUSLY_SKIP", None)
+        os.environ.pop("AGY_AUTO_USER_POLICY", None)
 
     def payload(self, cmd: str, ws: str = ROOT, cwd: str = ROOT, conv: str = "bypass_conv") -> dict:
         return {

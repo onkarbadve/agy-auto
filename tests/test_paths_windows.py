@@ -78,5 +78,44 @@ class WindowsCommandsTest(unittest.TestCase):
         self.assertEqual(d.decision, "allow")
 
 
+class WindowsStoreTest(unittest.TestCase):
+    def test_flock_windows_mocked(self):
+        import store
+        mock_msvcrt = mock.MagicMock()
+        mock_msvcrt.LK_LOCK = 1
+        mock_msvcrt.LK_UNLCK = 0
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.dict("sys.modules", {"msvcrt": mock_msvcrt}):
+            fh = mock.MagicMock()
+            fh.fileno.return_value = 42
+            store._flock_exclusive(fh)
+            fh.seek.assert_called_with(0)
+            mock_msvcrt.locking.assert_called_with(42, 1, 1)
+
+            store._flock_unlock(fh)
+            mock_msvcrt.locking.assert_called_with(42, 0, 1)
+
+    def test_store_operations_on_windows(self):
+        import tempfile
+        import store
+        mock_msvcrt = mock.MagicMock()
+        mock_msvcrt.LK_LOCK = 1
+        mock_msvcrt.LK_UNLCK = 0
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = os.path.join(tmpdir, "state")
+            audit_dir = os.path.join(tmpdir, "audit")
+            with mock.patch.object(sys, "platform", "win32"), mock.patch.dict("sys.modules", {"msvcrt": mock_msvcrt}):
+                s = store.Store(state_dir, audit_dir, 24.0, "v1")
+                key = s.cache_key("run_command", "git status", None, ["/ws"])
+                s.cache_put(key, "allow", "clean command")
+                cached = s.cache_get(key)
+                self.assertIsNotNone(cached)
+                self.assertEqual(cached["decision"], "allow")
+                self.assertEqual(cached["reason"], "clean command")
+
+                s.audit("conv-win", {"tool": "run_command", "decision": "allow"})
+                audit_file = os.path.join(audit_dir, "conv-win.jsonl")
+                self.assertTrue(os.path.exists(audit_file))
+
+
 if __name__ == "__main__":
     unittest.main()

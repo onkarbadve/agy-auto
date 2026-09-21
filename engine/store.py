@@ -1,11 +1,43 @@
 """Decision cache, per-conversation escalation counters, and the JSONL audit log."""
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
+import sys
 import time
+
+
+def _flock_exclusive(fh) -> None:
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+        except Exception:
+            pass
+    else:
+        try:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except Exception:
+            pass
+
+
+def _flock_unlock(fh) -> None:
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        except Exception:
+            pass
+    else:
+        try:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        except Exception:
+            pass
 
 
 def _ensure_dir(d: str) -> None:
@@ -20,7 +52,7 @@ class _Locked:
     def __enter__(self):
         _ensure_dir(os.path.dirname(self.path))
         self.fh = open(self.path, "a+")
-        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        _flock_exclusive(self.fh)
         self.fh.seek(0)
         try:
             self.data = json.load(self.fh)
@@ -35,8 +67,10 @@ class _Locked:
         self.fh.flush()
 
     def __exit__(self, *a):
-        fcntl.flock(self.fh, fcntl.LOCK_UN)
-        self.fh.close()
+        try:
+            _flock_unlock(self.fh)
+        finally:
+            self.fh.close()
 
 
 class Store:
@@ -131,10 +165,12 @@ class Store:
         _ensure_dir(self.audit_dir)
         path = os.path.join(self.audit_dir, f"{conversation_id or 'no-conversation'}.jsonl")
         line = json.dumps(record, ensure_ascii=False, default=str)
-        with open(path, "a") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            fh.write(line + "\n")
-            fcntl.flock(fh, fcntl.LOCK_UN)
+        with open(path, "a", encoding="utf-8") as fh:
+            _flock_exclusive(fh)
+            try:
+                fh.write(line + "\n")
+            finally:
+                _flock_unlock(fh)
         try:
             os.chmod(path, 0o600)
         except OSError:

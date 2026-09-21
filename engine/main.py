@@ -51,8 +51,10 @@ def load_policy(ws_roots: list[str]) -> tuple[dict, str, list[str]]:
     sources = [DEFAULT_POLICY]
     with open(DEFAULT_POLICY, "rb") as fh:
         cfg = tomllib.load(fh)
+    user_policy = os.environ.get("AGY_AUTO_USER_POLICY", USER_POLICY)
     extra = os.environ.get("AGY_AUTO_POLICY")
-    for path in [USER_POLICY] + ([extra] if extra else []):
+    user_paths = [user_policy] if user_policy else []
+    for path in user_paths + ([extra] if extra else []):
         if path and os.path.exists(path):
             with open(path, "rb") as fh:
                 cfg = _merge(cfg, tomllib.load(fh))
